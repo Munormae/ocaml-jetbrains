@@ -1,0 +1,13 @@
+<idea-plugin>
+    <dependencies>
+        <module name="intellij.platform.frontend"/>
+        <module name="ocaml.jetbrains.shared"/>
+    </dependencies>
+
+    <extensions defaultExtensionNs="com.intellij">
+        <toolWindow
+                id="ModularPlugin"
+                factoryClass="dev.munormae.toolWindow.ModularPluginToolWindowFactory"
+                icon="dev.munormae.ModularPluginIcons.ToolWindow"/>
+    </extensions>
+</idea-plugin>
