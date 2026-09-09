@@ -31,7 +31,10 @@ class DuneRunConfigurationProvisionerTest {
         val specs = discoverDuneRunConfigurations(root)
 
         assertEquals(listOf(DuneCommand.BUILD, DuneCommand.EXEC, DuneCommand.TEST), specs.map { it.command })
-        assertEquals("camel-app", specs.single { it.command == DuneCommand.EXEC }.target)
+        val executable = specs.single { it.command == DuneCommand.EXEC }
+        assertEquals("./bin/main.exe", executable.target)
+        assertEquals("camel-app", executable.legacyTarget)
+        assertEquals("Dune Run camel-app", executable.name)
         assertTrue(specs.all { it.workingDirectory == root.toAbsolutePath().normalize().toString() })
     }
 

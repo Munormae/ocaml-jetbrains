@@ -13,10 +13,20 @@ class DuneRunConfigurationProvisioningIntegrationTest : BasePlatformTestCase() {
     fun testProvisioningCreatesSelectsAndDoesNotDuplicateConfigurations() {
         val specs = listOf(
             DuneRunConfigurationSpec(DuneCommand.BUILD, "Dune Build"),
-            DuneRunConfigurationSpec(DuneCommand.EXEC, "Dune Run main", "./main.exe"),
+            DuneRunConfigurationSpec(
+                DuneCommand.EXEC,
+                "Dune Run camel-app",
+                "./bin/main.exe",
+                legacyTarget = "camel-app",
+            ),
         )
 
-        provisionDuneRunConfigurations(project, specs)
+        provisionDuneRunConfigurations(
+            project,
+            specs.map { spec ->
+                if (spec.command == DuneCommand.EXEC) spec.copy(target = "camel-app", legacyTarget = "") else spec
+            },
+        )
         provisionDuneRunConfigurations(
             project,
             specs.map { it.copy(workingDirectory = project.basePath.orEmpty()) },
@@ -31,6 +41,7 @@ class DuneRunConfigurationProvisioningIntegrationTest : BasePlatformTestCase() {
 
         assertEquals(2, configurations.size)
         assertEquals(setOf(DuneCommand.BUILD, DuneCommand.EXEC), configurations.map { it.command }.toSet())
+        assertEquals("./bin/main.exe", configurations.single { it.command == DuneCommand.EXEC }.target)
         assertEquals(
             DuneCommand.EXEC,
             (runManager.selectedConfiguration?.configuration as DuneRunConfiguration).command,

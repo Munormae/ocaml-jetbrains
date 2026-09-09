@@ -53,6 +53,25 @@ class OCamlNewProjectWizardTest {
     }
 
     @Test
+    fun `executable templates run the local Dune target instead of the public name`() {
+        val application = generatedProjectRunConfigurations(
+            template = OCamlProjectTemplate.APPLICATION,
+            projectName = "camel_app",
+            addTests = false,
+        ).single { it.command == DuneCommand.EXEC }
+        val applicationWithLibrary = generatedProjectRunConfigurations(
+            template = OCamlProjectTemplate.APPLICATION_WITH_LIBRARY,
+            projectName = "camel_app",
+            addTests = false,
+        ).single { it.command == DuneCommand.EXEC }
+
+        assertEquals("./bin/main.exe", application.target)
+        assertEquals("camel_app", application.legacyTarget)
+        assertEquals("./bin/main.exe", applicationWithLibrary.target)
+        assertEquals("camel_app-cli", applicationWithLibrary.legacyTarget)
+    }
+
+    @Test
     fun `Dune library wrapper preserves underscores in its OCaml module name`() {
         assertEquals("My_project", moduleName("my_project"))
 

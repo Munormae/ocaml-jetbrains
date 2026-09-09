@@ -9,12 +9,15 @@ import com.intellij.execution.configurations.RunConfigurationOptions
 import com.intellij.execution.configurations.RunProfileState
 import com.intellij.execution.configurations.RuntimeConfigurationError
 import com.intellij.execution.process.ColoredProcessHandler
+import com.intellij.execution.process.ProcessEvent
 import com.intellij.execution.process.ProcessHandler
+import com.intellij.execution.process.ProcessListener
 import com.intellij.execution.runners.ExecutionEnvironment
 import com.intellij.ide.trustedProjects.TrustedProjects
 import com.intellij.openapi.options.SettingsEditor
 import com.intellij.openapi.project.Project
 import com.intellij.util.execution.ParametersListUtil
+import dev.munormae.dune.DuneWatchService
 import dev.munormae.dune.createDuneCommandLine
 import dev.munormae.dune.findDuneRoot
 import dev.munormae.settings.OCamlProjectSettings
@@ -99,7 +102,24 @@ class DuneRunConfiguration(
 
         return object : CommandLineState(environment) {
             @Throws(ExecutionException::class)
-            override fun startProcess(): ProcessHandler = ColoredProcessHandler(commandLine)
+            override fun startProcess(): ProcessHandler {
+                val watchService = DuneWatchService.getInstance(project)
+                val watchWasRunning = watchService.pauseForRunConfiguration()
+                try {
+                    return ColoredProcessHandler(commandLine).also { handler ->
+                        if (watchWasRunning) {
+                            handler.addProcessListener(object : ProcessListener {
+                                override fun processTerminated(event: ProcessEvent) {
+                                    watchService.resumeAfterRunConfiguration(true)
+                                }
+                            })
+                        }
+                    }
+                } catch (exception: Throwable) {
+                    watchService.resumeAfterRunConfiguration(watchWasRunning)
+                    throw exception
+                }
+            }
         }
     }
 }

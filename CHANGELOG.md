@@ -16,3 +16,4 @@
 
 - OCaml project creation is registered on the Split Mode backend and appears with the built-in languages.
 - Bundled file templates are explicitly registered, avoiding template-usage errors in the IDE log.
+- Dune run configurations use local executable targets and temporarily pause managed watch mode, so execution works reliably on Windows.

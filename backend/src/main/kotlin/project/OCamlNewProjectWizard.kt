@@ -255,13 +255,27 @@ internal fun generatedProjectRunConfigurations(
             add(DuneRunConfigurationSpec(DuneCommand.EXEC, "Dune Run main", "./main.exe"))
 
         OCamlProjectTemplate.APPLICATION ->
-            add(DuneRunConfigurationSpec(DuneCommand.EXEC, "Dune Run $projectName", projectName))
+            add(
+                DuneRunConfigurationSpec(
+                    DuneCommand.EXEC,
+                    "Dune Run $projectName",
+                    "./bin/main.exe",
+                    legacyTarget = projectName,
+                ),
+            )
 
         OCamlProjectTemplate.LIBRARY -> Unit
 
         OCamlProjectTemplate.APPLICATION_WITH_LIBRARY -> {
             val executable = "$projectName-cli"
-            add(DuneRunConfigurationSpec(DuneCommand.EXEC, "Dune Run $executable", executable))
+            add(
+                DuneRunConfigurationSpec(
+                    DuneCommand.EXEC,
+                    "Dune Run $executable",
+                    "./bin/main.exe",
+                    legacyTarget = executable,
+                ),
+            )
         }
     }
     if (addTests && template != OCamlProjectTemplate.MINIMAL) {

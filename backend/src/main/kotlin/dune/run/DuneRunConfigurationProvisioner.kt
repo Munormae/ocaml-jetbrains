@@ -26,6 +26,7 @@ data class DuneRunConfigurationSpec(
     val name: String,
     val target: String = "",
     val workingDirectory: String = "",
+    val legacyTarget: String = "",
 )
 
 fun provisionDuneRunConfigurations(
@@ -47,6 +48,21 @@ fun provisionDuneRunConfigurations(
                 configuration.target == spec.target
         }
         if (alreadyExists) continue
+
+        val legacyConfiguration = spec.legacyTarget.takeIf { it.isNotEmpty() }?.let { legacyTarget ->
+            runManager.allSettings
+                .mapNotNull { it.configuration as? DuneRunConfiguration }
+                .firstOrNull { configuration ->
+                    configuration.command == spec.command && configuration.target == legacyTarget
+                }
+        }
+        if (legacyConfiguration != null) {
+            legacyConfiguration.target = spec.target
+            if (legacyConfiguration.workingDirectory.isBlank()) {
+                legacyConfiguration.workingDirectory = spec.workingDirectory
+            }
+            continue
+        }
 
         val factory = factories[spec.command] ?: continue
         val uniqueName = runManager.suggestUniqueName(spec.name, configurationType)
@@ -96,10 +112,10 @@ internal fun discoverDuneRunConfigurations(duneRoot: Path): List<DuneRunConfigur
                     for (form in forms) {
                         when (duneFormHead(form)) {
                             "executable" -> executableTargets(form, normalizedRoot, duneFile.parent)
-                                .forEach { target -> specs += execSpec(target, normalizedRoot) }
+                                .forEach { executable -> specs += execSpec(executable, normalizedRoot) }
 
                             "executables" -> executableTargets(form, normalizedRoot, duneFile.parent, plural = true)
-                                .forEach { target -> specs += execSpec(target, normalizedRoot) }
+                                .forEach { executable -> specs += execSpec(executable, normalizedRoot) }
 
                             "test", "tests", "cram" -> hasTests = true
                         }
@@ -120,27 +136,38 @@ internal fun discoverDuneRunConfigurations(duneRoot: Path): List<DuneRunConfigur
     return specs.distinctBy { it.command to it.target }
 }
 
-private fun execSpec(target: String, root: Path): DuneRunConfigurationSpec =
+private fun execSpec(executable: DuneExecutableTarget, root: Path): DuneRunConfigurationSpec =
     DuneRunConfigurationSpec(
         command = DuneCommand.EXEC,
-        name = "Dune Run ${target.removePrefix("./")}",
-        target = target,
+        name = "Dune Run ${executable.displayName}",
+        target = executable.localTarget,
         workingDirectory = root.toString(),
+        legacyTarget = executable.publicName.orEmpty(),
     )
+
+private data class DuneExecutableTarget(
+    val localTarget: String,
+    val displayName: String,
+    val publicName: String?,
+)
 
 private fun executableTargets(
     form: String,
     root: Path,
     stanzaDirectory: Path,
     plural: Boolean = false,
-): List<String> {
+): List<DuneExecutableTarget> {
     val publicNames = duneFieldValues(form, if (plural) "public_names" else "public_name")
     val localNames = duneFieldValues(form, if (plural) "names" else "name")
-    val count = maxOf(publicNames.size, localNames.size)
-    return (0 until count).mapNotNull { index ->
-        publicNames.getOrNull(index)
+    return localNames.mapIndexedNotNull { index, localName ->
+        if (localName.contains("%{")) return@mapIndexedNotNull null
+        val publicName = publicNames.getOrNull(index)
             ?.takeUnless { it == "-" || it.contains("%{") }
-            ?: localNames.getOrNull(index)?.let { localExecutableTarget(root, stanzaDirectory, it) }
+        DuneExecutableTarget(
+            localTarget = localExecutableTarget(root, stanzaDirectory, localName),
+            displayName = publicName ?: localName,
+            publicName = publicName,
+        )
     }
 }
 

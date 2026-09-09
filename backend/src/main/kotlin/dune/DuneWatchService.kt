@@ -47,6 +47,27 @@ class DuneWatchService(private val project: Project) : Disposable {
         start(root, commandLine)
     }
 
+    fun pauseForRunConfiguration(): Boolean {
+        val watch = synchronized(this) {
+            val current = runningWatch ?: return false
+            runningWatch = null
+            current.stopRequested = true
+            current
+        }
+        val handler = watch.handler
+        if (!handler.isProcessTerminated && !handler.isProcessTerminating) {
+            handler.destroyProcess()
+        }
+        if (!handler.waitFor(WATCH_STOP_TIMEOUT_MS)) {
+            LOG.warn("Dune watch did not stop within ${WATCH_STOP_TIMEOUT_MS}ms in ${watch.root}")
+        }
+        return true
+    }
+
+    fun resumeAfterRunConfiguration(wasRunning: Boolean) {
+        if (wasRunning && !project.isDisposed) refresh()
+    }
+
     @Synchronized
     private fun start(root: Path, commandLine: GeneralCommandLine) {
         try {
@@ -92,6 +113,7 @@ class DuneWatchService(private val project: Project) : Disposable {
     )
 
     companion object {
+        private const val WATCH_STOP_TIMEOUT_MS = 5_000L
         private val LOG = Logger.getInstance(DuneWatchService::class.java)
 
         fun getInstance(project: Project): DuneWatchService = project.service()
