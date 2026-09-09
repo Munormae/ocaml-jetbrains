@@ -1,0 +1,39 @@
+package dev.munormae
+
+import com.intellij.psi.TokenType
+import dev.munormae.lang.highlighting.DuneLexer
+import dev.munormae.lang.highlighting.DuneTokenTypes
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+class DuneSyntaxHighlightingTest {
+    @Test
+    fun `lexer recognizes Dune stanzas variables targets strings numbers and comments`() {
+        val source = """
+            ; Build the executable.
+            (executable
+             (name main)
+             (deps %{project_root}/data @all)
+             (enabled_if (= 42 "42")))
+        """.trimIndent()
+        val lexer = DuneLexer()
+        lexer.start(source)
+        val tokens = buildList {
+            while (lexer.tokenType != null) {
+                if (lexer.tokenType != TokenType.WHITE_SPACE) {
+                    add(source.substring(lexer.tokenStart, lexer.tokenEnd) to lexer.tokenType)
+                }
+                lexer.advance()
+            }
+        }
+
+        assertTrue("; Build the executable." to DuneTokenTypes.COMMENT in tokens)
+        assertTrue("executable" to DuneTokenTypes.KEYWORD in tokens)
+        assertTrue("%{project_root}" to DuneTokenTypes.VARIABLE in tokens)
+        assertTrue("@all" to DuneTokenTypes.TARGET in tokens)
+        assertTrue("42" to DuneTokenTypes.NUMBER in tokens)
+        assertTrue("\"42\"" to DuneTokenTypes.STRING in tokens)
+        assertTrue(tokens.count { it.second == DuneTokenTypes.LPAREN } == 5)
+        assertTrue(tokens.count { it.second == DuneTokenTypes.RPAREN } == 5)
+    }
+}

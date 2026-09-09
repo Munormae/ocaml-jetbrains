@@ -22,9 +22,15 @@
         <lang.syntaxHighlighterFactory
                 language="OCaml"
                 implementationClass="dev.munormae.lang.highlighting.OCamlSyntaxHighlighterFactory"/>
+        <lang.syntaxHighlighterFactory
+                language="Dune"
+                implementationClass="dev.munormae.lang.highlighting.DuneSyntaxHighlighterFactory"/>
         <lang.commenter language="OCaml" implementationClass="dev.munormae.lang.OCamlCommenter"/>
+        <lang.commenter language="Dune" implementationClass="dev.munormae.lang.DuneCommenter"/>
         <lang.braceMatcher language="OCaml" implementationClass="dev.munormae.lang.OCamlBraceMatcher"/>
+        <lang.braceMatcher language="Dune" implementationClass="dev.munormae.lang.DuneBraceMatcher"/>
         <colorSettingsPage implementation="dev.munormae.lang.highlighting.OCamlColorSettingsPage"/>
+        <colorSettingsPage implementation="dev.munormae.lang.highlighting.DuneColorSettingsPage"/>
 
         <projectService serviceImplementation="dev.munormae.settings.OCamlProjectSettings"/>
         <rdct.remoteSettingProvider implementation="dev.munormae.settings.OCamlSettingsRemoteInfoProvider"/>

@@ -15,6 +15,7 @@
         <projectService serviceImplementation="dev.munormae.dune.DuneWatchService"/>
         <platform.lsp.integrationProvider implementation="dev.munormae.lsp.OCamlLspIntegrationProvider"/>
         <postStartupActivity implementation="dev.munormae.lsp.OCamlLspSettingsActivity"/>
+        <postStartupActivity implementation="dev.munormae.dune.run.DuneRunConfigurationProvisioningActivity"/>
         <newProjectWizard.languageGenerator implementation="dev.munormae.project.OCamlNewProjectWizard"/>
 
         <internalFileTemplate name="OCaml Module"/>

@@ -13,6 +13,9 @@ import com.intellij.ui.components.JBCheckBox
 import com.intellij.ui.components.JBTextField
 import com.intellij.ui.dsl.builder.Panel
 import dev.munormae.icons.OCamlIcons
+import dev.munormae.dune.run.DuneCommand
+import dev.munormae.dune.run.DuneRunConfigurationSpec
+import dev.munormae.dune.run.provisionDuneRunConfigurations
 import dev.munormae.settings.OCamlProjectSettings
 import java.util.Locale
 import javax.swing.Icon
@@ -85,6 +88,14 @@ private class OCamlProjectStep(parent: NewProjectWizardStep) : AbstractNewProjec
             duneWatchEnabled = this@OCamlProjectStep.startDuneWatch.isSelected
         }
         OCamlProjectSettings.getInstance(project).notifyChanged()
+        val runConfigurations = generatedProjectRunConfigurations(
+            selectedTemplate,
+            projectName,
+            addTests.isSelected,
+        )
+        ApplicationManager.getApplication().invokeLater {
+            if (!project.isDisposed) provisionDuneRunConfigurations(project, runConfigurations)
+        }
 
         fileToOpen?.let { file ->
             ApplicationManager.getApplication().invokeLater {
@@ -232,3 +243,28 @@ internal fun sanitizeProjectName(rawName: String): String {
 
 internal fun moduleName(projectName: String): String =
     projectName.replaceFirstChar { it.uppercaseChar() }
+
+internal fun generatedProjectRunConfigurations(
+    template: OCamlProjectTemplate,
+    projectName: String,
+    addTests: Boolean,
+): List<DuneRunConfigurationSpec> = buildList {
+    add(DuneRunConfigurationSpec(DuneCommand.BUILD, "Dune Build"))
+    when (template) {
+        OCamlProjectTemplate.MINIMAL ->
+            add(DuneRunConfigurationSpec(DuneCommand.EXEC, "Dune Run main", "./main.exe"))
+
+        OCamlProjectTemplate.APPLICATION ->
+            add(DuneRunConfigurationSpec(DuneCommand.EXEC, "Dune Run $projectName", projectName))
+
+        OCamlProjectTemplate.LIBRARY -> Unit
+
+        OCamlProjectTemplate.APPLICATION_WITH_LIBRARY -> {
+            val executable = "$projectName-cli"
+            add(DuneRunConfigurationSpec(DuneCommand.EXEC, "Dune Run $executable", executable))
+        }
+    }
+    if (addTests && template != OCamlProjectTemplate.MINIMAL) {
+        add(DuneRunConfigurationSpec(DuneCommand.TEST, "Dune Test"))
+    }
+}

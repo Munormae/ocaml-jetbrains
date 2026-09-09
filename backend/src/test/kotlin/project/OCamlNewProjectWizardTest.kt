@@ -1,5 +1,6 @@
 package dev.munormae.project
 
+import dev.munormae.dune.run.DuneCommand
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -26,6 +27,29 @@ class OCamlNewProjectWizardTest {
         )
         assertFalse(files.keys.any { it.startsWith("test/") })
         assertTrue(files.getValue("dune").contains("(name main)"))
+    }
+
+    @Test
+    fun `minimal template receives ready to use build and run configurations`() {
+        val specs = generatedProjectRunConfigurations(
+            template = OCamlProjectTemplate.MINIMAL,
+            projectName = "hello_ocaml",
+            addTests = false,
+        )
+
+        assertEquals(listOf(DuneCommand.BUILD, DuneCommand.EXEC), specs.map { it.command })
+        assertEquals("./main.exe", specs.single { it.command == DuneCommand.EXEC }.target)
+    }
+
+    @Test
+    fun `library template receives build and optional test configurations`() {
+        val specs = generatedProjectRunConfigurations(
+            template = OCamlProjectTemplate.LIBRARY,
+            projectName = "camel_core",
+            addTests = true,
+        )
+
+        assertEquals(listOf(DuneCommand.BUILD, DuneCommand.TEST), specs.map { it.command })
     }
 
     @Test

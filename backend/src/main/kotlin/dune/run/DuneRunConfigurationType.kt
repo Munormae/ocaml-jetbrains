@@ -38,7 +38,7 @@ internal class DuneConfigurationFactory(
     override fun getOptionsClass() = DuneRunConfigurationOptions::class.java
 }
 
-internal enum class DuneCommand(
+enum class DuneCommand(
     val cliName: String,
     val displayName: String,
     val defaultConfigurationName: String,

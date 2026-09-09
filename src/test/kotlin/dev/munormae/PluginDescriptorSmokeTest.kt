@@ -80,6 +80,15 @@ class PluginDescriptorSmokeTest {
             configurationTypes.item(0).attributes.getNamedItem("implementation").nodeValue,
         )
 
+        val startupActivities = document.getElementsByTagName("postStartupActivity")
+        assertTrue(
+            "The backend must discover Dune run configurations when a project opens",
+            (0 until startupActivities.length).any {
+                startupActivities.item(it).attributes.getNamedItem("implementation").nodeValue ==
+                    "dev.munormae.dune.run.DuneRunConfigurationProvisioningActivity"
+            },
+        )
+
         val actions = document.getElementsByTagName("action")
         assertTrue(
             "The backend module must register the OCaml module creation action",

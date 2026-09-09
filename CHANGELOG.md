@@ -9,6 +9,8 @@
 - Dune Build, Dune Exec, and Dune Test run configurations with OPAM toolchain support.
 - OCaml module/interface creation, Dune/OPAM file templates, and tested project scaffolding.
 - A minimal OCaml project template and orange camel icons.
+- Automatic Dune Build, Run, and Test configuration discovery for generated and existing projects.
+- Dune syntax highlighting, line comments, and parenthesis matching.
 
 ### Fixed
 

@@ -1,10 +1,13 @@
 package dev.munormae
 
 import com.intellij.execution.configurations.ConfigurationTypeUtil
+import com.intellij.openapi.fileTypes.SyntaxHighlighterFactory
 import com.intellij.openapi.util.Disposer
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
 import dev.munormae.dune.run.DuneRunConfiguration
 import dev.munormae.dune.run.DuneRunConfigurationType
+import dev.munormae.lang.DuneLanguage
+import dev.munormae.lang.highlighting.DuneSyntaxHighlighter
 import org.jdom.Element
 
 class DuneRunConfigurationRegistrationTest : BasePlatformTestCase() {
@@ -43,5 +46,10 @@ class DuneRunConfigurationRegistrationTest : BasePlatformTestCase() {
         assertEquals(original.duneArguments, restored.duneArguments)
         assertEquals(original.programArguments, restored.programArguments)
         assertEquals(original.workingDirectory, restored.workingDirectory)
+    }
+
+    fun testDuneSyntaxHighlighterIsRegistered() {
+        val highlighter = SyntaxHighlighterFactory.getSyntaxHighlighter(DuneLanguage, project, null)
+        assertInstanceOf(highlighter, DuneSyntaxHighlighter::class.java)
     }
 }

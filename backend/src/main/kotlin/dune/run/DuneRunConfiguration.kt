@@ -34,7 +34,7 @@ class DuneRunConfiguration(
     factory: ConfigurationFactory,
     name: String,
 ) : RunConfigurationBase<DuneRunConfigurationOptions>(project, factory, name) {
-    internal val command: DuneCommand
+    val command: DuneCommand
         get() = (factory as DuneConfigurationFactory).command
 
     override fun getOptions(): DuneRunConfigurationOptions =
