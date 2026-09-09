@@ -5,15 +5,11 @@ plugins {
     application
     id("org.jetbrains.intellij.platform")
     id("org.jetbrains.kotlin.jvm")
-    id("rpc") apply false
-    id("org.jetbrains.kotlin.plugin.serialization") apply false
 }
 
 subprojects {
     apply(plugin = "org.jetbrains.intellij.platform.module")
-    apply(plugin = "rpc")
     apply(plugin = "org.jetbrains.kotlin.jvm")
-    apply(plugin = "org.jetbrains.kotlin.plugin.serialization")
 }
 
 // Read more: https://plugins.jetbrains.com/docs/intellij/tools-intellij-platform-gradle-plugin.html
@@ -27,6 +23,8 @@ dependencies {
 
         testFramework(TestFrameworkType.Platform)
     }
+
+    testImplementation("junit:junit:4.13.2")
 }
 
 intellijPlatform {

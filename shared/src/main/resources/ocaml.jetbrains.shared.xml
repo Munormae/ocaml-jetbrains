@@ -1,2 +1,33 @@
 <idea-plugin>
+    <extensions defaultExtensionNs="com.intellij">
+        <fileType
+                name="OCaml"
+                language="OCaml"
+                implementationClass="dev.munormae.lang.OCamlFileType"
+                fieldName="INSTANCE"
+                extensions="ml;mli"/>
+        <fileType
+                name="Dune"
+                language="Dune"
+                implementationClass="dev.munormae.lang.DuneFileType"
+                fieldName="INSTANCE"
+                fileNames="dune;dune-project;dune-workspace"/>
+        <fileType
+                name="OPAM"
+                language="OPAM"
+                implementationClass="dev.munormae.lang.OpamFileType"
+                fieldName="INSTANCE"
+                extensions="opam"/>
+
+        <lang.syntaxHighlighterFactory
+                language="OCaml"
+                implementationClass="dev.munormae.lang.highlighting.OCamlSyntaxHighlighterFactory"/>
+        <lang.commenter language="OCaml" implementationClass="dev.munormae.lang.OCamlCommenter"/>
+        <lang.braceMatcher language="OCaml" implementationClass="dev.munormae.lang.OCamlBraceMatcher"/>
+        <colorSettingsPage implementation="dev.munormae.lang.highlighting.OCamlColorSettingsPage"/>
+
+        <projectService serviceImplementation="dev.munormae.settings.OCamlProjectSettings"/>
+        <rdct.remoteSettingProvider implementation="dev.munormae.settings.OCamlSettingsRemoteInfoProvider"/>
+        <projectSettings service="dev.munormae.settings.OCamlProjectSettings"/>
+    </extensions>
 </idea-plugin>

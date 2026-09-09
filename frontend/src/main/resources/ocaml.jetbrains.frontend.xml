@@ -5,9 +5,11 @@
     </dependencies>
 
     <extensions defaultExtensionNs="com.intellij">
-        <toolWindow
-                id="ModularPlugin"
-                factoryClass="dev.munormae.toolWindow.ModularPluginToolWindowFactory"
-                icon="dev.munormae.ModularPluginIcons.ToolWindow"/>
+        <projectConfigurable
+                id="ocaml.settings"
+                parentId="language"
+                displayName="OCaml"
+                instance="dev.munormae.settings.OCamlSettingsConfigurable"/>
+        <newProjectWizard.languageGenerator implementation="dev.munormae.project.OCamlNewProjectWizard"/>
     </extensions>
 </idea-plugin>
