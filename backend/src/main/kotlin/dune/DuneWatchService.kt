@@ -12,7 +12,6 @@ import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import com.intellij.util.io.BaseOutputReader
 import dev.munormae.settings.OCamlProjectSettings
-import java.nio.file.Files
 import java.nio.file.Path
 
 class DuneWatchService(private val project: Project) : Disposable {
@@ -99,14 +98,6 @@ class DuneWatchService(private val project: Project) : Disposable {
     }
 }
 
-internal fun findDuneRoot(basePath: String?): Path? {
-    val root = basePath?.let(Path::of)?.toAbsolutePath()?.normalize() ?: return null
-    return root.takeIf {
-        Files.isRegularFile(it.resolve("dune-project")) ||
-            Files.isRegularFile(it.resolve("dune-workspace"))
-    }
-}
-
 internal fun createDuneWatchCommandLine(
     root: Path,
     useOpam: Boolean,
@@ -114,22 +105,14 @@ internal fun createDuneWatchCommandLine(
     opamSwitch: String?,
     duneExecutable: String?,
 ): GeneralCommandLine {
-    val resolvedDuneExecutable = duneExecutable.orEmpty().ifBlank { "dune" }
-    return if (useOpam) {
-        GeneralCommandLine(opamExecutable.orEmpty().ifBlank { "opam" }).apply {
-            addParameter("exec")
-            if (!opamSwitch.isNullOrBlank()) {
-                addParameters("--switch", opamSwitch.trim())
-            }
-            addParameter("--")
-            addParameter(resolvedDuneExecutable)
-        }
-    } else {
-        GeneralCommandLine(resolvedDuneExecutable)
-    }.apply {
-        addParameters("build", "--watch")
-        withWorkDirectory(root.toString())
-    }
+    return createDuneCommandLine(
+        workingDirectory = root,
+        useOpam = useOpam,
+        opamExecutable = opamExecutable,
+        opamSwitch = opamSwitch,
+        duneExecutable = duneExecutable,
+        arguments = listOf("build", "--watch"),
+    )
 }
 
 private class DuneWatchProcessHandler(commandLine: GeneralCommandLine) : OSProcessHandler(commandLine) {

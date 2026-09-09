@@ -9,6 +9,7 @@ An OCaml language plugin for IntelliJ IDEA Ultimate 2026.2. It is built for the 
 - semantic highlighting and diagnostics through `ocamllsp`
 - completion, hover documentation, go to definition, references, rename, code actions, and formatting through LSP
 - optional managed `dune build --watch` process for fresh build and Dune RPC diagnostics
+- native Dune Build, Dune Exec, and Dune Test run configurations
 - Dune and OPAM file types and icons
 - project-level toolchain settings synchronized between split-mode frontend and backend
 - OCaml New Project Wizard with executable, library, and executable + library templates
@@ -38,6 +39,8 @@ An OPAM switch and explicit executable paths can be configured under **Settings 
 
 Enable **Run dune build --watch for richer LSP diagnostics** for Dune projects when you want the plugin to keep Dune's RPC server and build information current. The managed process starts only for trusted projects containing `dune-project` or `dune-workspace` and stops with the project.
 
+Create a **Dune Build**, **Dune Exec**, or **Dune Test** configuration under **Run | Edit Configurations**. Each configuration supports Dune arguments, targets or executable arguments, and a custom working directory. Commands use the OPAM switch and executable paths configured in the OCaml project settings.
+
 ## Creating a project
 
 Choose **File | New | Project | OCaml**, then select one of these templates:
@@ -63,5 +66,5 @@ Use the **Run IDE with Plugin (Split Mode)** run configuration to launch the san
 ## Module layout
 
 - `shared` — file types, languages, icons, syntax support, and synchronized settings state
-- `backend` — `ocamllsp` process lifecycle and LSP integration
+- `backend` — `ocamllsp`, Dune process lifecycle, run configurations, and LSP integration
 - `frontend` — settings UI and the New Project Wizard

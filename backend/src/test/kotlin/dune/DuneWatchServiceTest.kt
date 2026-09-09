@@ -18,8 +18,9 @@ class DuneWatchServiceTest {
         assertNull(findDuneRoot(root.toString()))
 
         Files.writeString(root.resolve("dune-project"), "(lang dune 3.17)")
+        val nestedDirectory = Files.createDirectories(root.resolve("src/nested"))
 
-        assertEquals(root.toAbsolutePath().normalize(), findDuneRoot(root.toString()))
+        assertEquals(root.toAbsolutePath().normalize(), findDuneRoot(nestedDirectory.toString()))
     }
 
     @Test

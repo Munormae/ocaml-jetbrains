@@ -44,5 +44,12 @@ class PluginDescriptorSmokeTest {
                     "dev.munormae.dune.DuneWatchService"
             },
         )
+
+        val configurationTypes = document.getElementsByTagName("configurationType")
+        assertEquals("Exactly one Dune run configuration type must be registered", 1, configurationTypes.length)
+        assertEquals(
+            "dev.munormae.dune.run.DuneRunConfigurationType",
+            configurationTypes.item(0).attributes.getNamedItem("implementation").nodeValue,
+        )
     }
 }

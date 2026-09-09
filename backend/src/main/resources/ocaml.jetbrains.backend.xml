@@ -10,6 +10,7 @@
     </dependencies>
 
     <extensions defaultExtensionNs="com.intellij">
+        <configurationType implementation="dev.munormae.dune.run.DuneRunConfigurationType"/>
         <projectService serviceImplementation="dev.munormae.dune.DuneWatchService"/>
         <platform.lsp.integrationProvider implementation="dev.munormae.lsp.OCamlLspIntegrationProvider"/>
         <postStartupActivity implementation="dev.munormae.lsp.OCamlLspSettingsActivity"/>
