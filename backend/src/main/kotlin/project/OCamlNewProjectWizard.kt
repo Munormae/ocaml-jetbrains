@@ -28,13 +28,15 @@ class OCamlNewProjectWizard : LanguageGeneratorNewProjectWizard {
 
 private class OCamlProjectStep(parent: NewProjectWizardStep) : AbstractNewProjectWizardStep(parent) {
     private val template = JComboBox(OCamlProjectTemplate.entries.toTypedArray())
-    private val addTests = JBCheckBox("Add an Alcotest-free sample test", true)
+    private val addTests = JBCheckBox("Add a sample test", false)
     private val useOpam = JBCheckBox("Run language tools through opam", true)
     private val startDuneWatch = JBCheckBox("Run dune build --watch for richer diagnostics", true)
     private val opamSwitch = JBTextField()
 
     init {
+        template.addActionListener { updateTemplateControls() }
         useOpam.addActionListener { opamSwitch.isEnabled = useOpam.isSelected }
+        updateTemplateControls()
     }
 
     override fun setupUI(builder: Panel) {
@@ -61,7 +63,7 @@ private class OCamlProjectStep(parent: NewProjectWizardStep) : AbstractNewProjec
             "New Project Wizard base data is unavailable"
         }
         val projectName = sanitizeProjectName(baseData.name)
-        val selectedTemplate = template.selectedItem as? OCamlProjectTemplate ?: OCamlProjectTemplate.APPLICATION
+        val selectedTemplate = template.selectedItem as? OCamlProjectTemplate ?: OCamlProjectTemplate.MINIMAL
         val generatedFiles = createProjectFiles(projectName, selectedTemplate, addTests.isSelected)
         var fileToOpen: VirtualFile? = null
 
@@ -93,6 +95,12 @@ private class OCamlProjectStep(parent: NewProjectWizardStep) : AbstractNewProjec
         }
     }
 
+    private fun updateTemplateControls() {
+        val isMinimal = template.selectedItem == OCamlProjectTemplate.MINIMAL
+        if (isMinimal) addTests.isSelected = false
+        addTests.isEnabled = !isMinimal
+    }
+
     private fun createRelativeDirectory(root: VirtualFile, relativePath: String): VirtualFile {
         var current = root
         for (name in relativePath.split('/')) {
@@ -103,6 +111,7 @@ private class OCamlProjectStep(parent: NewProjectWizardStep) : AbstractNewProjec
 }
 
 internal enum class OCamlProjectTemplate(private val label: String) {
+    MINIMAL("Minimal"),
     APPLICATION("Executable"),
     LIBRARY("Library"),
     APPLICATION_WITH_LIBRARY("Executable + library");
@@ -110,6 +119,7 @@ internal enum class OCamlProjectTemplate(private val label: String) {
     override fun toString(): String = label
 
     fun entryFile(projectName: String): String = when (this) {
+        MINIMAL -> "main.ml"
         APPLICATION -> "bin/main.ml"
         LIBRARY -> "lib/$projectName.ml"
         APPLICATION_WITH_LIBRARY -> "bin/main.ml"
@@ -121,6 +131,16 @@ internal fun createProjectFiles(
     template: OCamlProjectTemplate,
     addTests: Boolean,
 ): LinkedHashMap<String, String> {
+    if (template == OCamlProjectTemplate.MINIMAL) {
+        return linkedMapOf(
+            "dune-project" to "(lang dune 3.17)\n(name $projectName)\n",
+            "dune" to "(executable\n (name main))\n",
+            "main.ml" to "let () = print_endline \"Hello from OCaml!\"\n",
+            ".ocamlformat" to "profile = conventional\n",
+            ".gitignore" to "_build/\n_opam/\n",
+        )
+    }
+
     val files = linkedMapOf(
         "dune-project" to """
             (lang dune 3.17)
@@ -142,6 +162,8 @@ internal fun createProjectFiles(
     )
 
     when (template) {
+        OCamlProjectTemplate.MINIMAL -> error("Minimal projects are generated before this branch")
+
         OCamlProjectTemplate.APPLICATION -> {
             files["bin/dune"] = """
                 (executable

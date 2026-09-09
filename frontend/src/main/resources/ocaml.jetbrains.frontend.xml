@@ -10,6 +10,5 @@
                 parentId="language"
                 displayName="OCaml"
                 instance="dev.munormae.settings.OCamlSettingsConfigurable"/>
-        <newProjectWizard.languageGenerator implementation="dev.munormae.project.OCamlNewProjectWizard"/>
     </extensions>
 </idea-plugin>

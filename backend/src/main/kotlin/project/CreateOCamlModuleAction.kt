@@ -27,7 +27,7 @@ class CreateOCamlModuleAction : CreateFileFromTemplateAction(
             .addKind("Module + Interface", OCamlIcons.File, MODULE_AND_INTERFACE_TEMPLATE)
     }
 
-    override fun createFile(name: String, templateName: String, directory: PsiDirectory): PsiFile {
+    public override fun createFile(name: String, templateName: String, directory: PsiDirectory): PsiFile {
         val baseName = moduleFileBaseName(name)
         if (templateName != MODULE_AND_INTERFACE_TEMPLATE) {
             return requireNotNull(super.createFile(baseName, templateName, directory)) {

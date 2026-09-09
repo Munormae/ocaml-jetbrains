@@ -1,10 +1,10 @@
 <svg width="40" height="40" viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
-  <rect x="3" y="3" width="34" height="34" rx="8" fill="url(#paint)"/>
-  <path d="M10 27V13h4.2l5.8 8.2 5.8-8.2H30v14h-4.2v-7.8L20 27l-5.8-7.8V27H10Z" fill="white"/>
+  <path fill="url(#paint)" d="M1.75 31c.25-5 2-8.75 5.75-10.5.75-4.75 3.25-7.5 6.25-7.5 2.75 0 4.5 2 5.75 5.75 1.25-5.5 3.75-8.25 6.75-8.25 3.75 0 5.25 4 5.5 9.5l1.25-1.5v-5.25c0-2.25 1.25-3.75 3.25-3.75l.75-2 1 1.75 1.5 1-1 3.5-3.25.25-.25 8.5c-.25 4.25-2.5 6.75-6 7.75V37.5h-3.75v-6.25H12.5v6.25h-4l.75-6.75C6.5 32.5 4 32.5 1.75 31Z"/>
+  <circle cx="36.5" cy="11.25" r=".7" fill="#3C3F41"/>
   <defs>
-    <linearGradient id="paint" x1="5" y1="5" x2="35" y2="36" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#F5A623"/>
-      <stop offset="1" stop-color="#D35400"/>
+    <linearGradient id="paint" x1="5" y1="7" x2="34" y2="36" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFAB40"/>
+      <stop offset="1" stop-color="#E56B00"/>
     </linearGradient>
   </defs>
 </svg>

@@ -1,6 +1,7 @@
 package dev.munormae.project
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -9,6 +10,22 @@ class OCamlNewProjectWizardTest {
     fun `project names are normalized for Dune`() {
         assertEquals("my_project", sanitizeProjectName("My Project"))
         assertEquals("project_42_tools", sanitizeProjectName("42 Tools"))
+    }
+
+    @Test
+    fun `minimal template creates only a buildable root executable`() {
+        val files = createProjectFiles(
+            projectName = "hello_ocaml",
+            template = OCamlProjectTemplate.MINIMAL,
+            addTests = true,
+        )
+
+        assertEquals(
+            setOf("dune-project", "dune", "main.ml", ".ocamlformat", ".gitignore"),
+            files.keys,
+        )
+        assertFalse(files.keys.any { it.startsWith("test/") })
+        assertTrue(files.getValue("dune").contains("(name main)"))
     }
 
     @Test

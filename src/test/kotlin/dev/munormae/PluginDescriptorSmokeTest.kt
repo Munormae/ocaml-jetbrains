@@ -40,6 +40,30 @@ class PluginDescriptorSmokeTest {
             providers.item(0).attributes.getNamedItem("implementation").nodeValue,
         )
 
+        val projectWizards = document.getElementsByTagName("newProjectWizard.languageGenerator")
+        assertEquals("Exactly one OCaml project wizard must be registered in the backend", 1, projectWizards.length)
+        assertEquals(
+            "dev.munormae.project.OCamlNewProjectWizard",
+            projectWizards.item(0).attributes.getNamedItem("implementation").nodeValue,
+        )
+
+        val internalFileTemplates = document.getElementsByTagName("internalFileTemplate")
+        val internalFileTemplateNames = (0 until internalFileTemplates.length)
+            .map { internalFileTemplates.item(it).attributes.getNamedItem("name").nodeValue }
+            .toSet()
+        assertTrue(
+            "Every bundled OCaml/Dune template must be registered with the platform",
+            setOf(
+                "OCaml Module",
+                "OCaml Interface",
+                "Dune File",
+                "Dune Project",
+                "Dune Workspace",
+                "OPAM Package",
+                "OCaml Format",
+            ).all { it in internalFileTemplateNames },
+        )
+
         val services = document.getElementsByTagName("projectService")
         assertTrue(
             "The backend module must register the Dune watch lifecycle service",

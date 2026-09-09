@@ -8,3 +8,9 @@
 
 - Dune Build, Dune Exec, and Dune Test run configurations with OPAM toolchain support.
 - OCaml module/interface creation, Dune/OPAM file templates, and tested project scaffolding.
+- A minimal OCaml project template and orange camel icons.
+
+### Fixed
+
+- OCaml project creation is registered on the Split Mode backend and appears with the built-in languages.
+- Bundled file templates are explicitly registered, avoiding template-usage errors in the IDE log.

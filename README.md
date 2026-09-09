@@ -12,7 +12,7 @@ An OCaml language plugin for IntelliJ IDEA Ultimate 2026.2. It is built for the 
 - native Dune Build, Dune Exec, and Dune Test run configurations
 - Dune and OPAM file types and icons
 - project-level toolchain settings synchronized between split-mode frontend and backend
-- OCaml New Project Wizard with executable, library, and executable + library templates
+- OCaml New Project Wizard with minimal, executable, library, and executable + library templates
 - New-file actions for OCaml modules/interfaces and templates for Dune, OPAM, and `.ocamlformat`
 - generated Dune project files, `.ocamlformat`, `.gitignore`, sample code, and optional tests
 
@@ -46,11 +46,12 @@ Create a **Dune Build**, **Dune Exec**, or **Dune Test** configuration under **R
 
 Choose **File | New | Project | OCaml**, then select one of these templates:
 
+- **Minimal**
 - **Executable**
 - **Library**
 - **Executable + library**
 
-The wizard creates a valid Dune structure and opens the main OCaml source file. Project names are normalized to valid Dune package names.
+**Minimal** is the default and creates only `dune-project`, `dune`, `main.ml`, `.ocamlformat`, and `.gitignore`. The wizard opens the main OCaml source file. Project names are normalized to valid Dune package names.
 
 ## Creating files
 
@@ -73,5 +74,5 @@ Use the **Run IDE with Plugin (Split Mode)** run configuration to launch the san
 ## Module layout
 
 - `shared` — file types, languages, icons, syntax support, and synchronized settings state
-- `backend` — `ocamllsp`, Dune process lifecycle, run configurations, and LSP integration
-- `frontend` — settings UI and the New Project Wizard
+- `backend` — `ocamllsp`, Dune process lifecycle, run configurations, project creation, and LSP integration
+- `frontend` — settings UI
