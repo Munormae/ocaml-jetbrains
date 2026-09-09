@@ -51,17 +51,16 @@ class DuneRunConfigurationProvisionerTest {
     }
 
     @Test
-    fun `top level form parser ignores parentheses in comments and strings`() {
-        val forms = topLevelDuneForms(
-            """
-                ; ignored (comment)
-                (executable (name main) (enabled_if (= "(" ")")))
-                (rule (action (echo "done")))
-            """.trimIndent(),
-        )
+    fun `discovers executables deeper than the old scan limit`() {
+        val root = temporaryFolder.newFolder("deep-monorepo").toPath()
+        Files.writeString(root.resolve("dune-project"), "(lang dune 3.17)\n")
+        var directory = root
+        repeat(12) { index -> directory = Files.createDirectories(directory.resolve("level$index")) }
+        Files.writeString(directory.resolve("dune"), "(executable (name deep_tool))\n")
 
-        assertEquals(2, forms.size)
-        assertTrue(forms.first().startsWith("(executable"))
-        assertTrue(forms.last().startsWith("(rule"))
+        val executable = discoverDuneRunConfigurations(root).single { it.command == DuneCommand.EXEC }
+
+        assertTrue(executable.target.endsWith("/deep_tool.exe"))
+        assertTrue(executable.target.count { it == '/' } > 8)
     }
 }

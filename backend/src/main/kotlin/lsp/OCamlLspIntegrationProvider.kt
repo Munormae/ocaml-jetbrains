@@ -1,6 +1,8 @@
 package dev.munormae.lsp
 
 import com.intellij.execution.configurations.GeneralCommandLine
+import com.intellij.execution.ExecutionException
+import com.intellij.ide.trustedProjects.TrustedProjects
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.platform.lsp.api.LspIntegrationProvider
@@ -16,26 +18,37 @@ class OCamlLspIntegrationProvider : LspIntegrationProvider {
         file: VirtualFile,
         clientStarter: LspIntegrationProvider.LspClientStarter,
     ) {
-        if (!OCamlProjectSettings.getInstance(project).state.lspEnabled) return
-        if (file.extension?.lowercase() !in OCAML_EXTENSIONS) return
+        if (!shouldStartOCamlLsp(
+                lspEnabled = OCamlProjectSettings.getInstance(project).state.lspEnabled,
+                trusted = TrustedProjects.isProjectTrusted(project),
+                extension = file.extension,
+            )
+        ) return
 
         clientStarter.ensureClientStarted(OCamlLspClientDescriptor(project))
     }
-
-    companion object {
-        private val OCAML_EXTENSIONS = setOf("ml", "mli")
-    }
 }
+
+internal fun shouldStartOCamlLsp(lspEnabled: Boolean, trusted: Boolean, extension: String?): Boolean =
+    lspEnabled && trusted && extension?.lowercase() in OCAML_EXTENSIONS
+
+private val OCAML_EXTENSIONS = setOf("ml", "mli")
 
 private class OCamlLspClientDescriptor(project: Project) :
     ProjectWideLspClientDescriptor(project, "OCaml Language Server") {
 
-    override fun isSupportedFile(file: VirtualFile): Boolean =
-        file.extension?.lowercase() in setOf("ml", "mli")
+    override fun isSupportedFile(file: VirtualFile): Boolean = shouldStartOCamlLsp(
+        lspEnabled = OCamlProjectSettings.getInstance(project).state.lspEnabled,
+        trusted = TrustedProjects.isProjectTrusted(project),
+        extension = file.extension,
+    )
 
     override fun getLanguageId(file: VirtualFile): String = "ocaml"
 
     override fun createCommandLine(): GeneralCommandLine {
+        if (!TrustedProjects.isProjectTrusted(project)) {
+            throw ExecutionException("ocamllsp cannot start until the project is trusted")
+        }
         val state = OCamlProjectSettings.getInstance(project).state
         val lspExecutable = state.lspExecutable.orEmpty().ifBlank { "ocamllsp" }
         val commandLine = if (state.useOpam) {

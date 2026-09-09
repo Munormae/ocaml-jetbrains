@@ -10,16 +10,19 @@ class DuneLexer : LexerBase() {
     private var tokenStart = 0
     private var tokenEnd = 0
     private var tokenType: IElementType? = null
+    private var tokenState = DEFAULT_STATE
+    private var nextState = DEFAULT_STATE
 
     override fun start(buffer: CharSequence, startOffset: Int, endOffset: Int, initialState: Int) {
         this.buffer = buffer
         bufferEnd = endOffset
         tokenStart = startOffset
         tokenEnd = startOffset
+        nextState = initialState
         locateToken()
     }
 
-    override fun getState(): Int = 0
+    override fun getState(): Int = tokenState
     override fun getTokenType(): IElementType? = tokenType
     override fun getTokenStart(): Int = tokenStart
     override fun getTokenEnd(): Int = tokenEnd
@@ -32,9 +35,15 @@ class DuneLexer : LexerBase() {
     }
 
     private fun locateToken() {
+        tokenState = nextState
         if (tokenStart >= bufferEnd) {
             tokenType = null
             tokenEnd = bufferEnd
+            return
+        }
+
+        if (tokenState == STRING_STATE || tokenState == ESCAPED_STRING_STATE) {
+            scanString(openingQuote = false)
             return
         }
 
@@ -42,7 +51,7 @@ class DuneLexer : LexerBase() {
             '(' -> singleCharacter(DuneTokenTypes.LPAREN)
             ')' -> singleCharacter(DuneTokenTypes.RPAREN)
             ';' -> scanComment()
-            '"' -> scanString()
+            '"' -> scanString(openingQuote = true)
             else -> when {
                 first.isWhitespace() -> scanWhitespace()
                 first == '%' && peek(1) == '{' -> scanVariable()
@@ -68,15 +77,26 @@ class DuneLexer : LexerBase() {
         tokenType = DuneTokenTypes.COMMENT
     }
 
-    private fun scanString() {
-        tokenEnd = tokenStart + 1
-        var escaped = false
+    private fun scanString(openingQuote: Boolean) {
+        tokenEnd = tokenStart + if (openingQuote) 1 else 0
+        var escaped = tokenState == ESCAPED_STRING_STATE
         while (tokenEnd < bufferEnd) {
             val current = buffer[tokenEnd++]
-            if (current == '"' && !escaped) break
+            if (current == '"' && !escaped) {
+                nextState = DEFAULT_STATE
+                tokenType = DuneTokenTypes.STRING
+                return
+            }
+            if (current == '\n' || current == '\r') {
+                if (current == '\r' && tokenEnd < bufferEnd && buffer[tokenEnd] == '\n') tokenEnd++
+                nextState = if (escaped) ESCAPED_STRING_STATE else STRING_STATE
+                tokenType = DuneTokenTypes.STRING
+                return
+            }
             escaped = current == '\\' && !escaped
             if (current != '\\') escaped = false
         }
+        nextState = if (escaped) ESCAPED_STRING_STATE else STRING_STATE
         tokenType = DuneTokenTypes.STRING
     }
 
@@ -103,6 +123,10 @@ class DuneLexer : LexerBase() {
         buffer.getOrNull(tokenStart + delta)?.takeIf { tokenStart + delta < bufferEnd }
 
     companion object {
+        const val DEFAULT_STATE = 0
+        const val STRING_STATE = 1
+        const val ESCAPED_STRING_STATE = 2
+
         private val ATOM_DELIMITERS = setOf(' ', '\t', '\n', '\r', '(', ')', ';', '"')
         private val KEYWORDS = setOf(
             "alias", "aliases", "allow_approximate_merlin", "and_absent", "as", "authors",

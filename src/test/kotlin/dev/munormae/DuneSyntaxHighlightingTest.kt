@@ -4,6 +4,7 @@ import com.intellij.psi.TokenType
 import dev.munormae.lang.highlighting.DuneLexer
 import dev.munormae.lang.highlighting.DuneTokenTypes
 import org.junit.Assert.assertTrue
+import org.junit.Assert.assertEquals
 import org.junit.Test
 
 class DuneSyntaxHighlightingTest {
@@ -35,5 +36,27 @@ class DuneSyntaxHighlightingTest {
         assertTrue("\"42\"" to DuneTokenTypes.STRING in tokens)
         assertTrue(tokens.count { it.second == DuneTokenTypes.LPAREN } == 5)
         assertTrue(tokens.count { it.second == DuneTokenTypes.RPAREN } == 5)
+    }
+
+    @Test
+    fun `lexer preserves multiline string state for incremental restart`() {
+        val source = "\"first line\\\nsecond line\nthird line\" tail"
+        val lexer = DuneLexer()
+        lexer.start(source)
+
+        assertEquals(DuneLexer.DEFAULT_STATE, lexer.state)
+        assertEquals(DuneTokenTypes.STRING, lexer.tokenType)
+        lexer.advance()
+        assertEquals(DuneLexer.ESCAPED_STRING_STATE, lexer.state)
+        assertEquals(DuneTokenTypes.STRING, lexer.tokenType)
+        lexer.advance()
+        assertEquals(DuneLexer.STRING_STATE, lexer.state)
+        assertEquals(DuneTokenTypes.STRING, lexer.tokenType)
+
+        val thirdLineOffset = source.indexOf("third line")
+        lexer.start(source, thirdLineOffset, source.length, DuneLexer.STRING_STATE)
+        assertEquals(DuneLexer.STRING_STATE, lexer.state)
+        assertEquals(DuneTokenTypes.STRING, lexer.tokenType)
+        assertEquals("third line\"", source.substring(lexer.tokenStart, lexer.tokenEnd))
     }
 }

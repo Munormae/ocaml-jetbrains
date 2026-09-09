@@ -3,23 +3,19 @@ package dev.munormae.dune.run
 import com.intellij.execution.RunManager
 import com.intellij.execution.RunnerAndConfigurationSettings
 import com.intellij.execution.configurations.ConfigurationTypeUtil
-import com.intellij.openapi.application.ApplicationManager
+import com.intellij.execution.process.CapturingProcessHandler
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
-import com.intellij.openapi.startup.ProjectActivity
-import dev.munormae.dune.findDuneRoot
+import dev.munormae.dune.DuneWatchService
+import dev.munormae.dune.SList
+import dev.munormae.dune.createDuneCommandLine
+import dev.munormae.dune.parseSExpressions
+import dev.munormae.settings.OCamlProjectSettings
 import java.nio.file.Files
+import java.nio.file.FileVisitResult
 import java.nio.file.Path
-
-class DuneRunConfigurationProvisioningActivity : ProjectActivity {
-    override suspend fun execute(project: Project) {
-        val duneRoot = findDuneRoot(project.basePath) ?: return
-        val specs = discoverDuneRunConfigurations(duneRoot)
-        ApplicationManager.getApplication().invokeLater {
-            if (!project.isDisposed) provisionDuneRunConfigurations(project, specs)
-        }
-    }
-}
+import java.nio.file.SimpleFileVisitor
+import java.nio.file.attribute.BasicFileAttributes
 
 data class DuneRunConfigurationSpec(
     val command: DuneCommand,
@@ -103,25 +99,32 @@ internal fun discoverDuneRunConfigurations(duneRoot: Path): List<DuneRunConfigur
     var hasTests = false
 
     try {
-        Files.walk(normalizedRoot, MAX_DUNE_SCAN_DEPTH).use { paths ->
-            paths
-                .filter { path -> Files.isRegularFile(path) && path.fileName.toString() == "dune" }
-                .filter { path -> normalizedRoot.relativize(path).none { it.toString() in IGNORED_DIRECTORIES } }
-                .forEach { duneFile ->
-                    val forms = topLevelDuneForms(Files.readString(duneFile))
+        Files.walkFileTree(normalizedRoot, object : SimpleFileVisitor<Path>() {
+            override fun preVisitDirectory(directory: Path, attributes: BasicFileAttributes): FileVisitResult {
+                if (directory != normalizedRoot && directory.fileName.toString() in IGNORED_DIRECTORIES) {
+                    return FileVisitResult.SKIP_SUBTREE
+                }
+                return FileVisitResult.CONTINUE
+            }
+
+            override fun visitFile(file: Path, attributes: BasicFileAttributes): FileVisitResult {
+                if (attributes.isRegularFile && file.fileName.toString() == "dune") {
+                    val forms = parseSExpressions(Files.readString(file)).filterIsInstance<SList>()
                     for (form in forms) {
-                        when (duneFormHead(form)) {
-                            "executable" -> executableTargets(form, normalizedRoot, duneFile.parent)
+                        when (form.head) {
+                            "executable" -> executableTargets(form, normalizedRoot, file.parent)
                                 .forEach { executable -> specs += execSpec(executable, normalizedRoot) }
 
-                            "executables" -> executableTargets(form, normalizedRoot, duneFile.parent, plural = true)
+                            "executables" -> executableTargets(form, normalizedRoot, file.parent, plural = true)
                                 .forEach { executable -> specs += execSpec(executable, normalizedRoot) }
 
                             "test", "tests", "cram" -> hasTests = true
                         }
                     }
                 }
-        }
+                return FileVisitResult.CONTINUE
+            }
+        })
     } catch (exception: Exception) {
         LOG.warn("Unable to inspect Dune files below $normalizedRoot", exception)
     }
@@ -134,6 +137,53 @@ internal fun discoverDuneRunConfigurations(duneRoot: Path): List<DuneRunConfigur
         )
     }
     return specs.distinctBy { it.command to it.target }
+}
+
+internal fun discoverDuneRunConfigurations(
+    project: Project,
+    duneRoot: Path,
+): List<DuneRunConfigurationSpec> {
+    val sourceModel = discoverDuneRunConfigurations(duneRoot)
+    val describedExecutables = describeDuneWorkspace(project, duneRoot) ?: return sourceModel
+    val sourceExecutables = sourceModel
+        .filter { it.command == DuneCommand.EXEC }
+        .associateBy(DuneRunConfigurationSpec::target)
+    val executables = (describedExecutables.map { sourceExecutables[it.target] ?: it } + sourceExecutables.values)
+        .distinctBy(DuneRunConfigurationSpec::target)
+
+    return buildList {
+        addAll(sourceModel.filter { it.command == DuneCommand.BUILD })
+        addAll(executables)
+        addAll(sourceModel.filter { it.command == DuneCommand.TEST })
+    }
+}
+
+private fun describeDuneWorkspace(project: Project, duneRoot: Path): List<DuneRunConfigurationSpec>? {
+    val state = OCamlProjectSettings.getInstance(project).state
+    val commandLine = createDuneCommandLine(
+        workingDirectory = duneRoot,
+        useOpam = state.useOpam,
+        opamExecutable = state.opamExecutable,
+        opamSwitch = state.opamSwitch,
+        duneExecutable = state.duneExecutable,
+        arguments = listOf("describe", "workspace", "--format=sexp", "--no-print-directory"),
+    )
+    val watchService = DuneWatchService.getInstance(project)
+    val watchWasRunning = watchService.pauseForRunConfiguration()
+    return try {
+        val output = CapturingProcessHandler(commandLine).runProcess(DUNE_DESCRIBE_TIMEOUT_MS)
+        if (output.isTimeout || output.exitCode != 0) {
+            LOG.debug("Dune describe unavailable; using source model: ${output.stderr}")
+            null
+        } else {
+            parseDuneDescribeRunConfigurations(output.stdout, duneRoot)
+        }
+    } catch (exception: Exception) {
+        LOG.debug("Dune describe unavailable; using source model", exception)
+        null
+    } finally {
+        watchService.resumeAfterRunConfiguration(watchWasRunning)
+    }
 }
 
 private fun execSpec(executable: DuneExecutableTarget, root: Path): DuneRunConfigurationSpec =
@@ -152,13 +202,17 @@ private data class DuneExecutableTarget(
 )
 
 private fun executableTargets(
-    form: String,
+    form: SList,
     root: Path,
     stanzaDirectory: Path,
     plural: Boolean = false,
 ): List<DuneExecutableTarget> {
-    val publicNames = duneFieldValues(form, if (plural) "public_names" else "public_name")
-    val localNames = duneFieldValues(form, if (plural) "names" else "name")
+    val publicNames = form.field(if (plural) "public_names" else "public_name")
+        ?.atomValuesAfterHead()
+        .orEmpty()
+    val localNames = form.field(if (plural) "names" else "name")
+        ?.atomValuesAfterHead()
+        .orEmpty()
     return localNames.mapIndexedNotNull { index, localName ->
         if (localName.contains("%{")) return@mapIndexedNotNull null
         val publicName = publicNames.getOrNull(index)
@@ -177,61 +231,6 @@ private fun localExecutableTarget(root: Path, stanzaDirectory: Path, name: Strin
     return "$prefix$name.exe"
 }
 
-internal fun topLevelDuneForms(text: String): List<String> {
-    val forms = mutableListOf<String>()
-    var depth = 0
-    var formStart = -1
-    var inString = false
-    var escaped = false
-    var inComment = false
-
-    text.forEachIndexed { index, character ->
-        if (inComment) {
-            if (character == '\n' || character == '\r') inComment = false
-            return@forEachIndexed
-        }
-        if (inString) {
-            if (character == '"' && !escaped) inString = false
-            escaped = character == '\\' && !escaped
-            if (character != '\\') escaped = false
-            return@forEachIndexed
-        }
-
-        when (character) {
-            ';' -> inComment = true
-            '"' -> inString = true
-            '(' -> {
-                if (depth == 0) formStart = index
-                depth++
-            }
-            ')' -> if (depth > 0) {
-                depth--
-                if (depth == 0 && formStart >= 0) {
-                    forms += text.substring(formStart, index + 1)
-                    formStart = -1
-                }
-            }
-        }
-    }
-    return forms
-}
-
-private fun duneFormHead(form: String): String? =
-    FORM_HEAD.find(form)?.groupValues?.get(1)
-
-private fun duneFieldValues(form: String, field: String): List<String> {
-    val values = Regex("""\(\s*${Regex.escape(field)}\s+([^()]*)\)""")
-        .find(form)
-        ?.groupValues
-        ?.get(1)
-        ?: return emptyList()
-    return DUNE_VALUE.findAll(values)
-        .map { match -> match.groups[1]?.value?.replace("\\\"", "\"") ?: match.value }
-        .toList()
-}
-
-private const val MAX_DUNE_SCAN_DEPTH = 8
 private val IGNORED_DIRECTORIES = setOf("_build", "_opam", ".git", ".idea")
-private val FORM_HEAD = Regex("""^\(\s*([A-Za-z_]+)""")
-private val DUNE_VALUE = Regex(""""((?:\\.|[^"\\])*)"|[^\s]+""")
+private const val DUNE_DESCRIBE_TIMEOUT_MS = 15_000
 private val LOG = Logger.getInstance(DuneRunConfigurationProvisioningActivity::class.java)

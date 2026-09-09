@@ -72,6 +72,20 @@ class PluginDescriptorSmokeTest {
                     "dev.munormae.dune.DuneWatchService"
             },
         )
+        assertTrue(
+            "The backend module must register live Dune configuration provisioning",
+            (0 until services.length).any {
+                services.item(it).attributes.getNamedItem("serviceImplementation").nodeValue ==
+                    "dev.munormae.dune.run.DuneRunConfigurationProvisioningService"
+            },
+        )
+        assertTrue(
+            "The backend module must register toolchain detection",
+            (0 until services.length).any {
+                services.item(it).attributes.getNamedItem("serviceImplementation").nodeValue ==
+                    "dev.munormae.toolchain.OCamlToolchainDetectionService"
+            },
+        )
 
         val configurationTypes = document.getElementsByTagName("configurationType")
         assertEquals("Exactly one Dune run configuration type must be registered", 1, configurationTypes.length)

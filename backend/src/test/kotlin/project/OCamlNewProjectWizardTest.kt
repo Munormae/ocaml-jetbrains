@@ -30,6 +30,20 @@ class OCamlNewProjectWizardTest {
     }
 
     @Test
+    fun `wizard uses the selected Dune language version with a safe fallback`() {
+        val files = createProjectFiles(
+            projectName = "hello_ocaml",
+            template = OCamlProjectTemplate.MINIMAL,
+            addTests = false,
+            duneLanguageVersion = "3.24",
+        )
+
+        assertTrue(files.getValue("dune-project").startsWith("(lang dune 3.24)"))
+        assertEquals("3.24", normalizeDuneLanguageVersion(" 3.24 "))
+        assertEquals("3.0", normalizeDuneLanguageVersion("latest"))
+    }
+
+    @Test
     fun `minimal template receives ready to use build and run configurations`() {
         val specs = generatedProjectRunConfigurations(
             template = OCamlProjectTemplate.MINIMAL,

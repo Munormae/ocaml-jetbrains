@@ -22,6 +22,11 @@ class OCamlProjectSettings(private val project: Project) :
         var duneWatchEnabled by property(false)
         var duneExecutable by string("")
         var ocamlformatExecutable by string("")
+        var opamStatus by string("Not checked")
+        var lspStatus by string("Not checked")
+        var duneStatus by string("Not checked")
+        var ocamlformatStatus by string("Not checked")
+        var toolchainRefreshCounter by property(0)
     }
 
     override fun loadState(state: SettingsState) {

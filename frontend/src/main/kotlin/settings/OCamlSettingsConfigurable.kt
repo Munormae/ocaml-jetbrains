@@ -10,7 +10,9 @@ import com.intellij.util.ui.FormBuilder
 import com.intellij.util.ui.JBUI
 import java.awt.BorderLayout
 import javax.swing.JComponent
+import javax.swing.JButton
 import javax.swing.JPanel
+import javax.swing.Timer
 
 class OCamlSettingsConfigurable(private val project: Project) : Configurable {
     private var component: JPanel? = null
@@ -23,6 +25,11 @@ class OCamlSettingsConfigurable(private val project: Project) : Configurable {
     private var duneWatchEnabled: JBCheckBox? = null
     private var duneExecutable: JBTextField? = null
     private var ocamlformatExecutable: JBTextField? = null
+    private var opamStatus: JBLabel? = null
+    private var lspStatus: JBLabel? = null
+    private var duneStatus: JBLabel? = null
+    private var ocamlformatStatus: JBLabel? = null
+    private var statusTimer: Timer? = null
 
     override fun getDisplayName(): String = "OCaml"
 
@@ -36,6 +43,23 @@ class OCamlSettingsConfigurable(private val project: Project) : Configurable {
         duneWatchEnabled = JBCheckBox("Run dune build --watch for richer LSP diagnostics")
         duneExecutable = JBTextField()
         ocamlformatExecutable = JBTextField()
+        opamStatus = JBLabel()
+        lspStatus = JBLabel()
+        duneStatus = JBLabel()
+        ocamlformatStatus = JBLabel()
+
+        val autoDetect = JButton("Auto-detect from OPAM/PATH").apply {
+            addActionListener {
+                opamExecutable?.text = ""
+                lspExecutable?.text = ""
+                duneExecutable?.text = ""
+                ocamlformatExecutable?.text = ""
+                requestToolchainRefresh()
+            }
+        }
+        val refreshStatus = JButton("Refresh status").apply {
+            addActionListener { requestToolchainRefresh() }
+        }
 
         lspEnabled!!.addActionListener { updateEnabledState() }
         useOpam!!.addActionListener { updateEnabledState() }
@@ -52,6 +76,16 @@ class OCamlSettingsConfigurable(private val project: Project) : Configurable {
             .addComponent(duneWatchEnabled!!)
             .addLabeledComponent("dune executable:", duneExecutable!!)
             .addLabeledComponent("ocamlformat executable:", ocamlformatExecutable!!)
+            .addSeparator(12)
+            .addComponent(JBLabel("Detected toolchain"))
+            .addLabeledComponent("opam:", opamStatus!!)
+            .addLabeledComponent("ocamllsp:", lspStatus!!)
+            .addLabeledComponent("dune:", duneStatus!!)
+            .addLabeledComponent("ocamlformat:", ocamlformatStatus!!)
+            .addComponent(JPanel().apply {
+                add(autoDetect)
+                add(refreshStatus)
+            })
             .addComponent(
                 JBLabel(
                     "<html>Leave executable fields empty to use <code>opam</code>, " +
@@ -66,6 +100,7 @@ class OCamlSettingsConfigurable(private val project: Project) : Configurable {
             add(JBScrollPane(form).apply { border = JBUI.Borders.empty() }, BorderLayout.CENTER)
         }
         reset()
+        statusTimer = Timer(750) { updateStatusLabels() }.also { it.start() }
         return component!!
     }
 
@@ -123,18 +158,48 @@ class OCamlSettingsConfigurable(private val project: Project) : Configurable {
         duneWatchEnabled = null
         duneExecutable = null
         ocamlformatExecutable = null
+        opamStatus = null
+        lspStatus = null
+        duneStatus = null
+        ocamlformatStatus = null
+        statusTimer?.stop()
+        statusTimer = null
     }
 
     private fun updateEnabledState() {
         val enabled = lspEnabled?.isSelected == true
-        useOpam?.isEnabled = enabled
-        opamExecutable?.isEnabled = enabled && useOpam?.isSelected == true
-        opamSwitch?.isEnabled = enabled && useOpam?.isSelected == true
+        useOpam?.isEnabled = true
+        opamExecutable?.isEnabled = useOpam?.isSelected == true
+        opamSwitch?.isEnabled = useOpam?.isSelected == true
         lspExecutable?.isEnabled = enabled
         additionalLspArguments?.isEnabled = enabled
         duneWatchEnabled?.isEnabled = enabled
-        duneExecutable?.isEnabled = enabled && duneWatchEnabled?.isSelected == true
-        ocamlformatExecutable?.isEnabled = enabled
+        duneExecutable?.isEnabled = true
+        ocamlformatExecutable?.isEnabled = true
+        updateStatusLabels()
+    }
+
+    private fun updateStatusLabels() {
+        val state = OCamlProjectSettings.getInstance(project).state
+        opamStatus?.text = state.opamStatus
+        lspStatus?.text = state.lspStatus
+        duneStatus?.text = state.duneStatus
+        ocamlformatStatus?.text = state.ocamlformatStatus
+    }
+
+    private fun showDetectingStatus() {
+        opamStatus?.text = "Detecting..."
+        lspStatus?.text = "Detecting..."
+        duneStatus?.text = "Detecting..."
+        ocamlformatStatus?.text = "Detecting..."
+    }
+
+    private fun requestToolchainRefresh() {
+        apply()
+        val settings = OCamlProjectSettings.getInstance(project)
+        settings.state.toolchainRefreshCounter++
+        settings.notifyChanged()
+        showDetectingStatus()
     }
 
     private fun JBTextField?.textValue(): String = this?.text?.trim().orEmpty()

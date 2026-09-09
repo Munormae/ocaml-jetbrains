@@ -12,11 +12,14 @@ import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.ui.components.JBCheckBox
 import com.intellij.ui.components.JBTextField
 import com.intellij.ui.dsl.builder.Panel
+import com.intellij.util.concurrency.AppExecutorUtil
 import dev.munormae.icons.OCamlIcons
 import dev.munormae.dune.run.DuneCommand
 import dev.munormae.dune.run.DuneRunConfigurationSpec
 import dev.munormae.dune.run.provisionDuneRunConfigurations
 import dev.munormae.settings.OCamlProjectSettings
+import dev.munormae.toolchain.DEFAULT_DUNE_LANGUAGE_VERSION
+import dev.munormae.toolchain.detectDefaultDuneLanguageVersion
 import java.util.Locale
 import javax.swing.Icon
 import javax.swing.JComboBox
@@ -35,16 +38,22 @@ private class OCamlProjectStep(parent: NewProjectWizardStep) : AbstractNewProjec
     private val useOpam = JBCheckBox("Run language tools through opam", true)
     private val startDuneWatch = JBCheckBox("Run dune build --watch for richer diagnostics", true)
     private val opamSwitch = JBTextField()
+    private val duneLanguageVersion = JBTextField(DEFAULT_DUNE_LANGUAGE_VERSION)
 
     init {
         template.addActionListener { updateTemplateControls() }
         useOpam.addActionListener { opamSwitch.isEnabled = useOpam.isSelected }
         updateTemplateControls()
+        detectDuneLanguageVersion()
     }
 
     override fun setupUI(builder: Panel) {
         builder.row("Template:") {
             cell(template)
+        }
+        builder.row("Dune language:") {
+            cell(duneLanguageVersion)
+                .comment("Auto-detected from the installed Dune version; editable, for example 3.17.")
         }
         builder.row {
             cell(addTests)
@@ -67,7 +76,12 @@ private class OCamlProjectStep(parent: NewProjectWizardStep) : AbstractNewProjec
         }
         val projectName = sanitizeProjectName(baseData.name)
         val selectedTemplate = template.selectedItem as? OCamlProjectTemplate ?: OCamlProjectTemplate.MINIMAL
-        val generatedFiles = createProjectFiles(projectName, selectedTemplate, addTests.isSelected)
+        val generatedFiles = createProjectFiles(
+            projectName,
+            selectedTemplate,
+            addTests.isSelected,
+            normalizeDuneLanguageVersion(duneLanguageVersion.text),
+        )
         var fileToOpen: VirtualFile? = null
 
         ApplicationManager.getApplication().runWriteAction {
@@ -112,6 +126,17 @@ private class OCamlProjectStep(parent: NewProjectWizardStep) : AbstractNewProjec
         addTests.isEnabled = !isMinimal
     }
 
+    private fun detectDuneLanguageVersion() {
+        AppExecutorUtil.getAppExecutorService().execute {
+            val detected = detectDefaultDuneLanguageVersion() ?: return@execute
+            ApplicationManager.getApplication().invokeLater {
+                if (duneLanguageVersion.text == DEFAULT_DUNE_LANGUAGE_VERSION) {
+                    duneLanguageVersion.text = detected
+                }
+            }
+        }
+    }
+
     private fun createRelativeDirectory(root: VirtualFile, relativePath: String): VirtualFile {
         var current = root
         for (name in relativePath.split('/')) {
@@ -141,10 +166,12 @@ internal fun createProjectFiles(
     projectName: String,
     template: OCamlProjectTemplate,
     addTests: Boolean,
+    duneLanguageVersion: String = DEFAULT_DUNE_LANGUAGE_VERSION,
 ): LinkedHashMap<String, String> {
+    val languageVersion = normalizeDuneLanguageVersion(duneLanguageVersion)
     if (template == OCamlProjectTemplate.MINIMAL) {
         return linkedMapOf(
-            "dune-project" to "(lang dune 3.17)\n(name $projectName)\n",
+            "dune-project" to "(lang dune $languageVersion)\n(name $projectName)\n",
             "dune" to "(executable\n (name main))\n",
             "main.ml" to "let () = print_endline \"Hello from OCaml!\"\n",
             ".ocamlformat" to "profile = conventional\n",
@@ -154,7 +181,7 @@ internal fun createProjectFiles(
 
     val files = linkedMapOf(
         "dune-project" to """
-            (lang dune 3.17)
+            (lang dune $languageVersion)
             (name $projectName)
             (generate_opam_files true)
 
@@ -244,6 +271,9 @@ internal fun sanitizeProjectName(rawName: String): String {
 internal fun moduleName(projectName: String): String =
     projectName.replaceFirstChar { it.uppercaseChar() }
 
+internal fun normalizeDuneLanguageVersion(rawVersion: String): String =
+    DUNE_LANGUAGE_VERSION.matchEntire(rawVersion.trim())?.value ?: DEFAULT_DUNE_LANGUAGE_VERSION
+
 internal fun generatedProjectRunConfigurations(
     template: OCamlProjectTemplate,
     projectName: String,
@@ -282,3 +312,5 @@ internal fun generatedProjectRunConfigurations(
         add(DuneRunConfigurationSpec(DuneCommand.TEST, "Dune Test"))
     }
 }
+
+private val DUNE_LANGUAGE_VERSION = Regex("""\d+\.\d+""")
