@@ -30,6 +30,7 @@ private class OCamlProjectStep(parent: NewProjectWizardStep) : AbstractNewProjec
     private val template = JComboBox(OCamlProjectTemplate.entries.toTypedArray())
     private val addTests = JBCheckBox("Add an Alcotest-free sample test", true)
     private val useOpam = JBCheckBox("Run language tools through opam", true)
+    private val startDuneWatch = JBCheckBox("Run dune build --watch for richer diagnostics", true)
     private val opamSwitch = JBTextField()
 
     init {
@@ -45,6 +46,9 @@ private class OCamlProjectStep(parent: NewProjectWizardStep) : AbstractNewProjec
         }
         builder.row {
             cell(useOpam)
+        }
+        builder.row {
+            cell(startDuneWatch)
         }
         builder.row("opam switch:") {
             cell(opamSwitch)
@@ -76,6 +80,7 @@ private class OCamlProjectStep(parent: NewProjectWizardStep) : AbstractNewProjec
         OCamlProjectSettings.getInstance(project).state.apply {
             useOpam = this@OCamlProjectStep.useOpam.isSelected
             opamSwitch = this@OCamlProjectStep.opamSwitch.text.trim()
+            duneWatchEnabled = this@OCamlProjectStep.startDuneWatch.isSelected
         }
         OCamlProjectSettings.getInstance(project).notifyChanged()
 

@@ -1,0 +1,137 @@
+package dev.munormae.dune
+
+import com.intellij.execution.ExecutionException
+import com.intellij.execution.configurations.GeneralCommandLine
+import com.intellij.execution.process.OSProcessHandler
+import com.intellij.execution.process.ProcessEvent
+import com.intellij.execution.process.ProcessListener
+import com.intellij.ide.trustedProjects.TrustedProjects
+import com.intellij.openapi.Disposable
+import com.intellij.openapi.components.service
+import com.intellij.openapi.diagnostic.Logger
+import com.intellij.openapi.project.Project
+import com.intellij.util.io.BaseOutputReader
+import dev.munormae.settings.OCamlProjectSettings
+import java.nio.file.Files
+import java.nio.file.Path
+
+class DuneWatchService(private val project: Project) : Disposable {
+    private var runningWatch: RunningWatch? = null
+
+    @Synchronized
+    fun refresh() {
+        val state = OCamlProjectSettings.getInstance(project).state
+        val root = findDuneRoot(project.basePath)
+        if (!state.lspEnabled || !state.duneWatchEnabled || root == null || !TrustedProjects.isProjectTrusted(project)) {
+            stop()
+            return
+        }
+
+        val commandLine = createDuneWatchCommandLine(
+            root = root,
+            useOpam = state.useOpam,
+            opamExecutable = state.opamExecutable,
+            opamSwitch = state.opamSwitch,
+            duneExecutable = state.duneExecutable,
+        )
+        val current = runningWatch
+        if (
+            current != null &&
+            current.root == root &&
+            current.command == commandLine.commandLineString &&
+            !current.handler.isProcessTerminated
+        ) {
+            return
+        }
+
+        stop()
+        start(root, commandLine)
+    }
+
+    @Synchronized
+    private fun start(root: Path, commandLine: GeneralCommandLine) {
+        try {
+            val handler = DuneWatchProcessHandler(commandLine)
+            val watch = RunningWatch(root, commandLine.commandLineString, handler)
+            runningWatch = watch
+            handler.addProcessListener(object : ProcessListener {
+                override fun processTerminated(event: ProcessEvent) {
+                    synchronized(this@DuneWatchService) {
+                        if (runningWatch === watch) runningWatch = null
+                    }
+                    if (!watch.stopRequested && event.exitCode != 0 && !project.isDisposed) {
+                        LOG.warn("Dune watch stopped with exit code ${event.exitCode} in $root")
+                    }
+                }
+            })
+            handler.startNotify()
+            LOG.info("Started Dune watch in $root: ${commandLine.commandLineString}")
+        } catch (exception: ExecutionException) {
+            LOG.warn("Unable to start Dune watch in $root", exception)
+        }
+    }
+
+    @Synchronized
+    private fun stop() {
+        val watch = runningWatch ?: return
+        runningWatch = null
+        watch.stopRequested = true
+        if (!watch.handler.isProcessTerminated && !watch.handler.isProcessTerminating) {
+            watch.handler.destroyProcess()
+        }
+    }
+
+    override fun dispose() {
+        stop()
+    }
+
+    private data class RunningWatch(
+        val root: Path,
+        val command: String,
+        val handler: OSProcessHandler,
+        var stopRequested: Boolean = false,
+    )
+
+    companion object {
+        private val LOG = Logger.getInstance(DuneWatchService::class.java)
+
+        fun getInstance(project: Project): DuneWatchService = project.service()
+    }
+}
+
+internal fun findDuneRoot(basePath: String?): Path? {
+    val root = basePath?.let(Path::of)?.toAbsolutePath()?.normalize() ?: return null
+    return root.takeIf {
+        Files.isRegularFile(it.resolve("dune-project")) ||
+            Files.isRegularFile(it.resolve("dune-workspace"))
+    }
+}
+
+internal fun createDuneWatchCommandLine(
+    root: Path,
+    useOpam: Boolean,
+    opamExecutable: String?,
+    opamSwitch: String?,
+    duneExecutable: String?,
+): GeneralCommandLine {
+    val resolvedDuneExecutable = duneExecutable.orEmpty().ifBlank { "dune" }
+    return if (useOpam) {
+        GeneralCommandLine(opamExecutable.orEmpty().ifBlank { "opam" }).apply {
+            addParameter("exec")
+            if (!opamSwitch.isNullOrBlank()) {
+                addParameters("--switch", opamSwitch.trim())
+            }
+            addParameter("--")
+            addParameter(resolvedDuneExecutable)
+        }
+    } else {
+        GeneralCommandLine(resolvedDuneExecutable)
+    }.apply {
+        addParameters("build", "--watch")
+        withWorkDirectory(root.toString())
+    }
+}
+
+private class DuneWatchProcessHandler(commandLine: GeneralCommandLine) : OSProcessHandler(commandLine) {
+    override fun readerOptions(): BaseOutputReader.Options = BaseOutputReader.Options.forMostlySilentProcess()
+}

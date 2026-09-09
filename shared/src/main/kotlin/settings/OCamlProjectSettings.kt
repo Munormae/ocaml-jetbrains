@@ -19,6 +19,7 @@ class OCamlProjectSettings(private val project: Project) :
         var opamSwitch by string("")
         var lspExecutable by string("")
         var additionalLspArguments by string("")
+        var duneWatchEnabled by property(false)
         var duneExecutable by string("")
         var ocamlformatExecutable by string("")
     }

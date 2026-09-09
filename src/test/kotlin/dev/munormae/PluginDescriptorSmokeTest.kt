@@ -35,5 +35,14 @@ class PluginDescriptorSmokeTest {
             "dev.munormae.lsp.OCamlLspIntegrationProvider",
             providers.item(0).attributes.getNamedItem("implementation").nodeValue,
         )
+
+        val services = document.getElementsByTagName("projectService")
+        assertTrue(
+            "The backend module must register the Dune watch lifecycle service",
+            (0 until services.length).any {
+                services.item(it).attributes.getNamedItem("serviceImplementation").nodeValue ==
+                    "dev.munormae.dune.DuneWatchService"
+            },
+        )
     }
 }

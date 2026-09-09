@@ -1,8 +1,10 @@
 package dev.munormae.lsp
 
+import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.startup.ProjectActivity
 import com.intellij.platform.lsp.api.LspClientManager
+import dev.munormae.dune.DuneWatchService
 import dev.munormae.settings.OCamlProjectSettings
 import dev.munormae.settings.OCamlSettingsChangedListener
 
@@ -13,7 +15,11 @@ class OCamlLspSettingsActivity : ProjectActivity {
             OCamlSettingsChangedListener {
                 LspClientManager.getInstance(project)
                     .stopAndRestartClientsIfNeeded(OCamlLspIntegrationProvider::class.java)
+                ApplicationManager.getApplication().invokeLater {
+                    if (!project.isDisposed) DuneWatchService.getInstance(project).refresh()
+                }
             },
         )
+        DuneWatchService.getInstance(project).refresh()
     }
 }

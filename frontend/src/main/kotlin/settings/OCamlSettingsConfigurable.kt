@@ -20,6 +20,7 @@ class OCamlSettingsConfigurable(private val project: Project) : Configurable {
     private var opamSwitch: JBTextField? = null
     private var lspExecutable: JBTextField? = null
     private var additionalLspArguments: JBTextField? = null
+    private var duneWatchEnabled: JBCheckBox? = null
     private var duneExecutable: JBTextField? = null
     private var ocamlformatExecutable: JBTextField? = null
 
@@ -32,11 +33,13 @@ class OCamlSettingsConfigurable(private val project: Project) : Configurable {
         opamSwitch = JBTextField()
         lspExecutable = JBTextField()
         additionalLspArguments = JBTextField()
+        duneWatchEnabled = JBCheckBox("Run dune build --watch for richer LSP diagnostics")
         duneExecutable = JBTextField()
         ocamlformatExecutable = JBTextField()
 
         lspEnabled!!.addActionListener { updateEnabledState() }
         useOpam!!.addActionListener { updateEnabledState() }
+        duneWatchEnabled!!.addActionListener { updateEnabledState() }
 
         val form = FormBuilder.createFormBuilder()
             .addComponent(lspEnabled!!)
@@ -46,6 +49,7 @@ class OCamlSettingsConfigurable(private val project: Project) : Configurable {
             .addLabeledComponent("ocamllsp executable:", lspExecutable!!)
             .addLabeledComponent("Additional LSP arguments:", additionalLspArguments!!)
             .addSeparator(12)
+            .addComponent(duneWatchEnabled!!)
             .addLabeledComponent("dune executable:", duneExecutable!!)
             .addLabeledComponent("ocamlformat executable:", ocamlformatExecutable!!)
             .addComponent(
@@ -73,6 +77,7 @@ class OCamlSettingsConfigurable(private val project: Project) : Configurable {
             opamSwitch.textValue() != state.opamSwitch ||
             lspExecutable.textValue() != state.lspExecutable ||
             additionalLspArguments.textValue() != state.additionalLspArguments ||
+            duneWatchEnabled?.isSelected != state.duneWatchEnabled ||
             duneExecutable.textValue() != state.duneExecutable ||
             ocamlformatExecutable.textValue() != state.ocamlformatExecutable
     }
@@ -86,6 +91,7 @@ class OCamlSettingsConfigurable(private val project: Project) : Configurable {
             opamSwitch = this@OCamlSettingsConfigurable.opamSwitch.textValue()
             lspExecutable = this@OCamlSettingsConfigurable.lspExecutable.textValue()
             additionalLspArguments = this@OCamlSettingsConfigurable.additionalLspArguments.textValue()
+            duneWatchEnabled = this@OCamlSettingsConfigurable.duneWatchEnabled?.isSelected == true
             duneExecutable = this@OCamlSettingsConfigurable.duneExecutable.textValue()
             ocamlformatExecutable = this@OCamlSettingsConfigurable.ocamlformatExecutable.textValue()
         }
@@ -100,6 +106,7 @@ class OCamlSettingsConfigurable(private val project: Project) : Configurable {
         opamSwitch?.text = state.opamSwitch
         lspExecutable?.text = state.lspExecutable
         additionalLspArguments?.text = state.additionalLspArguments
+        duneWatchEnabled?.isSelected = state.duneWatchEnabled
         duneExecutable?.text = state.duneExecutable
         ocamlformatExecutable?.text = state.ocamlformatExecutable
         updateEnabledState()
@@ -113,6 +120,7 @@ class OCamlSettingsConfigurable(private val project: Project) : Configurable {
         opamSwitch = null
         lspExecutable = null
         additionalLspArguments = null
+        duneWatchEnabled = null
         duneExecutable = null
         ocamlformatExecutable = null
     }
@@ -124,6 +132,9 @@ class OCamlSettingsConfigurable(private val project: Project) : Configurable {
         opamSwitch?.isEnabled = enabled && useOpam?.isSelected == true
         lspExecutable?.isEnabled = enabled
         additionalLspArguments?.isEnabled = enabled
+        duneWatchEnabled?.isEnabled = enabled
+        duneExecutable?.isEnabled = enabled && duneWatchEnabled?.isSelected == true
+        ocamlformatExecutable?.isEnabled = enabled
     }
 
     private fun JBTextField?.textValue(): String = this?.text?.trim().orEmpty()
