@@ -4,6 +4,7 @@ dependencies {
         bundledModule("intellij.platform.backend")
         bundledModule("intellij.platform.execution")
         bundledModule("intellij.platform.ide.impl")
+        bundledModule("intellij.platform.lang.impl")
         bundledModule("intellij.platform.lsp")
     }
 

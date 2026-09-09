@@ -13,6 +13,7 @@ An OCaml language plugin for IntelliJ IDEA Ultimate 2026.2. It is built for the 
 - Dune and OPAM file types and icons
 - project-level toolchain settings synchronized between split-mode frontend and backend
 - OCaml New Project Wizard with executable, library, and executable + library templates
+- New-file actions for OCaml modules/interfaces and templates for Dune, OPAM, and `.ocamlformat`
 - generated Dune project files, `.ocamlformat`, `.gitignore`, sample code, and optional tests
 
 ## Requirements
@@ -50,6 +51,12 @@ Choose **File | New | Project | OCaml**, then select one of these templates:
 - **Executable + library**
 
 The wizard creates a valid Dune structure and opens the main OCaml source file. Project names are normalized to valid Dune package names.
+
+## Creating files
+
+Right-click a project directory and choose **New | OCaml Module**. The dialog can create an implementation (`.ml`), an interface (`.mli`), or both with the same base name. The **New** menu also contains templates for `dune`, `dune-project`, `dune-workspace`, OPAM package files, and `.ocamlformat`.
+
+OCaml derives the compiled module name by capitalizing the first character of the file base name: `user_profile.ml` becomes `User_profile`, while `userProfile.ml` becomes `UserProfile`. Camel case works, but lowercase `snake_case` filenames are the conventional and more portable choice. Matching `.ml` and `.mli` files must use the same base name.
 
 ## Development
 

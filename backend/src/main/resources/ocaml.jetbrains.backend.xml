@@ -3,6 +3,7 @@
         <module name="intellij.platform.backend"/>
         <module name="intellij.platform.kernel.backend"/>
         <module name="intellij.platform.ide.impl"/>
+        <module name="intellij.platform.lang.impl"/>
         <module name="ocaml.jetbrains.shared"/>
 
         <plugin id="com.intellij.modules.ultimate"/>
@@ -15,4 +16,15 @@
         <platform.lsp.integrationProvider implementation="dev.munormae.lsp.OCamlLspIntegrationProvider"/>
         <postStartupActivity implementation="dev.munormae.lsp.OCamlLspSettingsActivity"/>
     </extensions>
+
+    <actions>
+        <action
+                id="OCaml.NewModule"
+                class="dev.munormae.project.CreateOCamlModuleAction"
+                text="OCaml Module"
+                description="Creates an OCaml module, interface, or both"
+                icon="dev.munormae.icons.OCamlIcons.File">
+            <add-to-group group-id="NewGroup"/>
+        </action>
+    </actions>
 </idea-plugin>

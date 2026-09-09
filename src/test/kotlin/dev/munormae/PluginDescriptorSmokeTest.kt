@@ -24,6 +24,10 @@ class PluginDescriptorSmokeTest {
             "The backend module must depend on the actual IntelliJ LSP content module",
             "intellij.platform.lsp" in moduleNames,
         )
+        assertTrue(
+            "The module creation action must declare its IntelliJ language implementation dependency",
+            "intellij.platform.lang.impl" in moduleNames,
+        )
         assertFalse(
             "The legacy LSP compatibility alias is not a resolvable content module",
             "com.intellij.modules.lsp" in moduleNames,
@@ -50,6 +54,14 @@ class PluginDescriptorSmokeTest {
         assertEquals(
             "dev.munormae.dune.run.DuneRunConfigurationType",
             configurationTypes.item(0).attributes.getNamedItem("implementation").nodeValue,
+        )
+
+        val actions = document.getElementsByTagName("action")
+        assertTrue(
+            "The backend module must register the OCaml module creation action",
+            (0 until actions.length).any {
+                actions.item(it).attributes.getNamedItem("id").nodeValue == "OCaml.NewModule"
+            },
         )
     }
 }

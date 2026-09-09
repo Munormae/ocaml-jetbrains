@@ -102,7 +102,7 @@ private class OCamlProjectStep(parent: NewProjectWizardStep) : AbstractNewProjec
     }
 }
 
-private enum class OCamlProjectTemplate(private val label: String) {
+internal enum class OCamlProjectTemplate(private val label: String) {
     APPLICATION("Executable"),
     LIBRARY("Library"),
     APPLICATION_WITH_LIBRARY("Executable + library");
@@ -116,7 +116,7 @@ private enum class OCamlProjectTemplate(private val label: String) {
     }
 }
 
-private fun createProjectFiles(
+internal fun createProjectFiles(
     projectName: String,
     template: OCamlProjectTemplate,
     addTests: Boolean,
@@ -199,7 +199,7 @@ private fun addLibrary(files: MutableMap<String, String>, projectName: String) {
     files["lib/$projectName.ml"] = "let greeting () = \"Hello from $projectName!\"\n"
 }
 
-private fun sanitizeProjectName(rawName: String): String {
+internal fun sanitizeProjectName(rawName: String): String {
     var result = rawName.lowercase(Locale.ROOT)
         .replace(Regex("[^a-z0-9_]+"), "_")
         .trim('_')
@@ -208,7 +208,5 @@ private fun sanitizeProjectName(rawName: String): String {
     return result
 }
 
-private fun moduleName(projectName: String): String = projectName
-    .split('_')
-    .filter(String::isNotEmpty)
-    .joinToString("") { part -> part.replaceFirstChar { it.uppercaseChar() } }
+internal fun moduleName(projectName: String): String =
+    projectName.replaceFirstChar { it.uppercaseChar() }

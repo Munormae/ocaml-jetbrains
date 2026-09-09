@@ -15,7 +15,7 @@
     <description><![CDATA[
         OCaml language support powered by ocamllsp and Dune.<br>
         Includes syntax highlighting, diagnostics, completion, navigation, formatting,
-        Dune run configurations, toolchain settings, file icons, and OCaml project templates.
+        Dune run configurations, toolchain settings, file creation, and OCaml project templates.
     ]]></description>
 
     <content>
