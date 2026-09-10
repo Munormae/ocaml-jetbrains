@@ -1,0 +1,17 @@
+((root /home/cuihtlauac/caml/mixtli-dune)
+ (build_context _build/default)
+ (executables
+  ((names (cloud))
+   (requires ())
+   (modules
+    (((name Wmo)
+      (impl (_build/default/wmo.ml))
+      (intf ())
+      (cmt (_build/default/.cloud.eobjs/byte/wmo.cmt))
+      (cmti ()))
+     ((name Cloud)
+      (impl (_build/default/cloud.ml))
+      (intf ())
+      (cmt (_build/default/.cloud.eobjs/byte/cloud.cmt))
+      (cmti ()))))
+   (include_dirs (_build/default/.cloud.eobjs/byte)))))

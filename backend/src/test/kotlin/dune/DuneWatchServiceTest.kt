@@ -2,6 +2,8 @@ package dev.munormae.dune
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
@@ -58,5 +60,30 @@ class DuneWatchServiceTest {
         assertEquals("dune", commandLine.exePath)
         assertEquals(listOf("build", "--watch"), commandLine.parametersList.list)
         assertEquals(root.toFile(), commandLine.workDirectory)
+    }
+
+    @Test
+    fun `watch resumes only after the last concurrent pause lease closes`() {
+        var pauseCalls = 0
+        var resumeCalls = 0
+        val controller = ReferenceCountedPauseController(
+            onFirstAcquire = { pauseCalls++ },
+            onLastRelease = { resumeCalls++ },
+        )
+
+        val first = controller.acquire()
+        val second = controller.acquire()
+
+        assertTrue(controller.isPaused)
+        assertEquals(1, pauseCalls)
+        first.close()
+        assertTrue(controller.isPaused)
+        assertEquals(0, resumeCalls)
+        second.close()
+        assertFalse(controller.isPaused)
+        assertEquals(1, resumeCalls)
+
+        second.close()
+        assertEquals(1, resumeCalls)
     }
 }

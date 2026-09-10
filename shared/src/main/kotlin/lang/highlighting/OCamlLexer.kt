@@ -99,11 +99,18 @@ class OCamlLexer : LexerBase() {
         val marker = buffer.subSequence(tokenStart + 1, markerEnd).toString()
         val terminator = "|$marker}"
         val contentStart = markerEnd + 1
-        val remainder = buffer.subSequence(contentStart, bufferEnd).toString()
-        val relativeEnd = remainder.indexOf(terminator)
-        tokenEnd = if (relativeEnd >= 0) contentStart + relativeEnd + terminator.length else bufferEnd
+        val terminatorStart = indexOf(terminator, contentStart)
+        tokenEnd = if (terminatorStart >= 0) terminatorStart + terminator.length else bufferEnd
         tokenType = OCamlTokenTypes.STRING
         return true
+    }
+
+    private fun indexOf(value: String, startOffset: Int): Int {
+        val lastStart = bufferEnd - value.length
+        for (index in startOffset..lastStart) {
+            if (startsWith(value, index)) return index
+        }
+        return -1
     }
 
     private fun scanCharacterOrTypeVariable() {

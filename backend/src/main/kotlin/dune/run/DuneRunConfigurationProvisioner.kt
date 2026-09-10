@@ -29,36 +29,56 @@ fun provisionDuneRunConfigurations(
     project: Project,
     specs: List<DuneRunConfigurationSpec>,
 ) {
-    if (specs.isEmpty() || project.isDisposed) return
+    if (project.isDisposed) return
 
     val configurationType = ConfigurationTypeUtil.findConfigurationType(DuneRunConfigurationType::class.java)
     val runManager = RunManager.getInstance(project)
     val factories = configurationType.configurationFactories
         .filterIsInstance<DuneConfigurationFactory>()
         .associateBy { it.command }
+    val desired = specs
+        .map { spec -> DesiredDuneConfiguration(spec, modelId(project, spec)) }
+        .distinctBy(DesiredDuneConfiguration::modelId)
+    val desiredModelIds = desired.mapTo(mutableSetOf(), DesiredDuneConfiguration::modelId)
 
-    for (spec in specs.distinctBy { it.command to it.target }) {
-        val alreadyExists = runManager.allSettings.any { settings ->
-            val configuration = settings.configuration as? DuneRunConfiguration
-            configuration?.command == spec.command &&
-                configuration.target == spec.target
+    for ((spec, desiredModelId) in desired) {
+        val managedSettings = runManager.allSettings.firstOrNull { settings ->
+            val configuration = settings.configuration as? DuneRunConfiguration ?: return@firstOrNull false
+            configuration.managedByPlugin && configuration.modelId == desiredModelId
         }
-        if (alreadyExists) continue
+        if (managedSettings != null) {
+            updateManagedConfiguration(managedSettings, spec, desiredModelId)
+            continue
+        }
 
         val legacyConfiguration = spec.legacyTarget.takeIf { it.isNotEmpty() }?.let { legacyTarget ->
             runManager.allSettings
                 .mapNotNull { it.configuration as? DuneRunConfiguration }
                 .firstOrNull { configuration ->
-                    configuration.command == spec.command && configuration.target == legacyTarget
+                    configuration.managedByPlugin &&
+                        configuration.command == spec.command &&
+                        configuration.target == legacyTarget &&
+                        canonicalWorkingDirectory(project, configuration.workingDirectory) ==
+                        canonicalWorkingDirectory(project, spec.workingDirectory)
                 }
         }
         if (legacyConfiguration != null) {
             legacyConfiguration.target = spec.target
-            if (legacyConfiguration.workingDirectory.isBlank()) {
-                legacyConfiguration.workingDirectory = spec.workingDirectory
-            }
+            legacyConfiguration.workingDirectory = spec.workingDirectory
+            legacyConfiguration.modelId = desiredModelId
             continue
         }
+
+
+        val equivalentUserConfigurationExists = runManager.allSettings.any { settings ->
+            val configuration = settings.configuration as? DuneRunConfiguration ?: return@any false
+            !configuration.managedByPlugin &&
+                configuration.command == spec.command &&
+                configuration.target.trim() == spec.target.trim() &&
+                canonicalWorkingDirectory(project, configuration.workingDirectory) ==
+                canonicalWorkingDirectory(project, spec.workingDirectory)
+        }
+        if (equivalentUserConfigurationExists) continue
 
         val factory = factories[spec.command] ?: continue
         val uniqueName = runManager.suggestUniqueName(spec.name, configurationType)
@@ -66,12 +86,59 @@ fun provisionDuneRunConfigurations(
         val configuration = settings.configuration as DuneRunConfiguration
         configuration.target = spec.target
         configuration.workingDirectory = spec.workingDirectory
+        configuration.managedByPlugin = true
+        configuration.modelId = desiredModelId
         runManager.addConfiguration(settings)
     }
+
+    runManager.allSettings
+        .filter { settings ->
+            val configuration = settings.configuration as? DuneRunConfiguration ?: return@filter false
+            configuration.managedByPlugin && configuration.modelId !in desiredModelIds
+        }
+        .forEach(runManager::removeConfiguration)
 
     if (runManager.selectedConfiguration == null) {
         selectPreferredDuneConfiguration(runManager, configurationType)
     }
+}
+
+private data class DesiredDuneConfiguration(
+    val spec: DuneRunConfigurationSpec,
+    val modelId: String,
+)
+
+private fun updateManagedConfiguration(
+    settings: RunnerAndConfigurationSettings,
+    spec: DuneRunConfigurationSpec,
+    modelId: String,
+) {
+    val configuration = settings.configuration as DuneRunConfiguration
+    configuration.target = spec.target
+    configuration.workingDirectory = spec.workingDirectory
+    configuration.modelId = modelId
+}
+
+internal fun modelId(project: Project, spec: DuneRunConfigurationSpec): String = buildString {
+    append("dune-model-v1|")
+    append(canonicalWorkingDirectory(project, spec.workingDirectory))
+    append('|')
+    append(spec.command.name)
+    append('|')
+    append(spec.target.trim())
+}
+
+private fun canonicalWorkingDirectory(project: Project, configuredPath: String): String {
+    val projectRoot = project.basePath
+        ?.let { runCatching { Path.of(it).toAbsolutePath().normalize() }.getOrNull() }
+    val configured = configuredPath.trim()
+    val resolved = when {
+        configured.isEmpty() -> projectRoot
+        else -> runCatching { Path.of(configured) }.getOrNull()?.let { path ->
+            if (path.isAbsolute) path.normalize() else projectRoot?.resolve(path)?.normalize() ?: path.normalize()
+        }
+    }
+    return resolved?.toString()?.replace('\\', '/') ?: configured.replace('\\', '/')
 }
 
 private fun selectPreferredDuneConfiguration(
@@ -168,8 +235,7 @@ private fun describeDuneWorkspace(project: Project, duneRoot: Path): List<DuneRu
         duneExecutable = state.duneExecutable,
         arguments = listOf("describe", "workspace", "--format=sexp", "--no-print-directory"),
     )
-    val watchService = DuneWatchService.getInstance(project)
-    val watchWasRunning = watchService.pauseForRunConfiguration()
+    val pauseLease = DuneWatchService.getInstance(project).acquirePause()
     return try {
         val output = CapturingProcessHandler(commandLine).runProcess(DUNE_DESCRIBE_TIMEOUT_MS)
         if (output.isTimeout || output.exitCode != 0) {
@@ -182,7 +248,7 @@ private fun describeDuneWorkspace(project: Project, duneRoot: Path): List<DuneRu
         LOG.debug("Dune describe unavailable; using source model", exception)
         null
     } finally {
-        watchService.resumeAfterRunConfiguration(watchWasRunning)
+        pauseLease.close()
     }
 }
 

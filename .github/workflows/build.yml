@@ -50,6 +50,10 @@ jobs:
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v6
 
+      # Keep release.yml from referring to a Gradle task that is not registered.
+      - name: Validate release workflow task
+        run: ./gradlew help --task publishPlugin
+
       # Build plugin
       - name: Build plugin
         run: ./gradlew buildPlugin

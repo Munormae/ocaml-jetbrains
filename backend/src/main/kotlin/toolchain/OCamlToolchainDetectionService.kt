@@ -12,15 +12,24 @@ import dev.munormae.settings.OCamlProjectSettings
 import java.io.File
 import java.nio.file.Files
 import java.nio.file.Path
+import java.util.concurrent.CompletableFuture
 import java.util.concurrent.atomic.AtomicLong
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 
 class OCamlToolchainDetectionService(private val project: Project) : Disposable {
     private val requestedGeneration = AtomicLong()
+    private val mutableStatus = MutableStateFlow(OCamlToolchainStatusSnapshot.NOT_CHECKED)
+    internal val statusFlow: StateFlow<OCamlToolchainStatusSnapshot> = mutableStatus
 
     fun refresh() {
-        val generation = requestedGeneration.incrementAndGet()
         if (ApplicationManager.getApplication().isUnitTestMode) return
         val settings = ToolchainSettingsSnapshot.from(OCamlProjectSettings.getInstance(project).state)
+        refresh(settings)
+    }
+
+    internal fun refresh(settings: ToolchainSettingsSnapshot) {
+        val generation = requestedGeneration.incrementAndGet()
         if (!TrustedProjects.isProjectTrusted(project)) {
             applySnapshot(generation, ToolchainDetectionSnapshot.blocked())
             return
@@ -33,15 +42,8 @@ class OCamlToolchainDetectionService(private val project: Project) : Disposable 
     }
 
     private fun applySnapshot(generation: Long, snapshot: ToolchainDetectionSnapshot) {
-        ApplicationManager.getApplication().invokeLater {
-            if (project.isDisposed || requestedGeneration.get() != generation) return@invokeLater
-            OCamlProjectSettings.getInstance(project).state.apply {
-                opamStatus = snapshot.opam.status
-                lspStatus = snapshot.ocamllsp.status
-                duneStatus = snapshot.dune.status
-                ocamlformatStatus = snapshot.ocamlformat.status
-            }
-        }
+        if (project.isDisposed || requestedGeneration.get() != generation) return
+        mutableStatus.value = snapshot.toStatusSnapshot()
     }
 
     override fun dispose() {
@@ -71,12 +73,23 @@ internal data class ToolchainSettingsSnapshot(
                 duneExecutable = state.duneExecutable.orEmpty(),
                 ocamlformatExecutable = state.ocamlformatExecutable.orEmpty(),
             )
+
+        fun from(dto: OCamlToolchainSettingsDto): ToolchainSettingsSnapshot =
+            ToolchainSettingsSnapshot(
+                useOpam = dto.useOpam,
+                opamExecutable = dto.opamExecutable,
+                opamSwitch = dto.opamSwitch,
+                lspExecutable = dto.lspExecutable,
+                duneExecutable = dto.duneExecutable,
+                ocamlformatExecutable = dto.ocamlformatExecutable,
+            )
     }
 }
 
 internal data class ToolProbeResult(
     val status: String,
     val version: String? = null,
+    val isAvailable: Boolean = false,
 )
 
 internal data class ToolchainDetectionSnapshot(
@@ -96,16 +109,19 @@ internal data class ToolchainDetectionSnapshot(
 internal fun detectToolchain(
     settings: ToolchainSettingsSnapshot,
     projectBasePath: String?,
+    probe: ToolProbe = ::probeTool,
 ): ToolchainDetectionSnapshot {
     val workingDirectory = projectBasePath
         ?.let { runCatching { Path.of(it) }.getOrNull() }
         ?.takeIf(Files::isDirectory)
     val opamExecutable = settings.opamExecutable.ifBlank { "opam" }
-    val opam = probeTool(
-        commandLine = GeneralCommandLine(opamExecutable).withParameters("--version"),
-        source = executableSource(opamExecutable, configured = settings.opamExecutable.isNotBlank()),
-        workingDirectory = workingDirectory,
-    )
+    val opamProbe = {
+        probe(
+            GeneralCommandLine(opamExecutable).withParameters("--version"),
+            executableSource(opamExecutable, configured = settings.opamExecutable.isNotBlank()),
+            workingDirectory,
+        )
+    }
 
     fun languageTool(executable: String, defaultName: String): ToolProbeResult {
         val resolvedExecutable = executable.ifBlank { defaultName }
@@ -125,26 +141,43 @@ internal fun detectToolchain(
         } else {
             executableSource(resolvedExecutable, configured = executable.isNotBlank())
         }
-        return probeTool(commandLine, source, workingDirectory)
+        return probe(commandLine, source, workingDirectory)
     }
 
-    return ToolchainDetectionSnapshot(
-        opam = opam,
-        ocamllsp = languageTool(settings.lspExecutable, "ocamllsp"),
-        dune = languageTool(settings.duneExecutable, "dune"),
-        ocamlformat = languageTool(settings.ocamlformatExecutable, "ocamlformat"),
+    val languageProbes = listOf(
+        { languageTool(settings.lspExecutable, "ocamllsp") },
+        { languageTool(settings.duneExecutable, "dune") },
+        { languageTool(settings.ocamlformatExecutable, "ocamlformat") },
     )
+    if (settings.useOpam) {
+        val opam = opamProbe()
+        if (!opam.isAvailable) {
+            val unavailable = ToolProbeResult("Unavailable because opam could not be started")
+            return ToolchainDetectionSnapshot(opam, unavailable, unavailable, unavailable)
+        }
+        val tools = runProbesInParallel(languageProbes)
+        return ToolchainDetectionSnapshot(opam, tools[0], tools[1], tools[2])
+    }
+
+    val results = runProbesInParallel(listOf(opamProbe) + languageProbes)
+    return ToolchainDetectionSnapshot(results[0], results[1], results[2], results[3])
 }
 
-internal fun detectDefaultDuneLanguageVersion(): String? {
-    val commands = listOf(
-        GeneralCommandLine("opam").withParameters("exec", "--", "dune", "--version"),
-        GeneralCommandLine("dune").withParameters("--version"),
-    )
-    return commands.firstNotNullOfOrNull { command ->
-        probeTool(command, "auto", null).version?.let(::parseDuneLanguageVersion)
-    }
+internal fun detectDuneLanguageVersion(useOpam: Boolean, opamSwitch: String): String? {
+    val command = createDuneVersionProbeCommand(useOpam, opamSwitch)
+    return probeTool(command, "wizard", null).version?.let(::parseDuneLanguageVersion)
 }
+
+internal fun createDuneVersionProbeCommand(useOpam: Boolean, opamSwitch: String): GeneralCommandLine =
+    if (useOpam) {
+        GeneralCommandLine("opam").apply {
+            addParameter("exec")
+            if (opamSwitch.isNotBlank()) addParameters("--switch", opamSwitch.trim())
+            addParameters("--", "dune", "--version")
+        }
+    } else {
+        GeneralCommandLine("dune").withParameters("--version")
+    }
 
 internal fun parseDuneLanguageVersion(versionOutput: String): String? =
     DUNE_VERSION.find(versionOutput)?.let { match ->
@@ -167,7 +200,7 @@ private fun probeTool(
             .orEmpty()
         if (output.exitCode == 0) {
             val version = text.ifEmpty { "version unavailable" }
-            ToolProbeResult("OK: $version ($source)", version)
+            ToolProbeResult("OK: $version ($source)", version, isAvailable = true)
         } else {
             ToolProbeResult("Unavailable: ${text.ifEmpty { "exit code ${output.exitCode}" }} ($source)")
         }
@@ -175,6 +208,20 @@ private fun probeTool(
         ToolProbeResult("Unavailable: ${exception.message ?: exception.javaClass.simpleName} ($source)")
     }
 }
+
+private fun runProbesInParallel(probes: List<() -> ToolProbeResult>): List<ToolProbeResult> = probes
+    .map { probe -> CompletableFuture.supplyAsync(probe) }
+    .map(CompletableFuture<ToolProbeResult>::join)
+
+private fun ToolchainDetectionSnapshot.toStatusSnapshot(): OCamlToolchainStatusSnapshot =
+    OCamlToolchainStatusSnapshot(
+        opam = opam.status,
+        ocamllsp = ocamllsp.status,
+        dune = dune.status,
+        ocamlformat = ocamlformat.status,
+    )
+
+internal typealias ToolProbe = (GeneralCommandLine, String, Path?) -> ToolProbeResult
 
 private fun executableSource(executable: String, configured: Boolean): String {
     if (configured) return executable

@@ -9,7 +9,9 @@ import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.VfsUtil
 import com.intellij.openapi.vfs.VirtualFile
+import com.intellij.ui.DocumentAdapter
 import com.intellij.ui.components.JBCheckBox
+import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBTextField
 import com.intellij.ui.dsl.builder.Panel
 import com.intellij.util.concurrency.AppExecutorUtil
@@ -19,10 +21,14 @@ import dev.munormae.dune.run.DuneRunConfigurationSpec
 import dev.munormae.dune.run.provisionDuneRunConfigurations
 import dev.munormae.settings.OCamlProjectSettings
 import dev.munormae.toolchain.DEFAULT_DUNE_LANGUAGE_VERSION
-import dev.munormae.toolchain.detectDefaultDuneLanguageVersion
+import dev.munormae.toolchain.detectDuneLanguageVersion
 import java.util.Locale
+import java.util.concurrent.atomic.AtomicLong
 import javax.swing.Icon
+import javax.swing.JButton
 import javax.swing.JComboBox
+import javax.swing.Timer
+import javax.swing.event.DocumentEvent
 
 class OCamlNewProjectWizard : LanguageGeneratorNewProjectWizard {
     override val name: String = "OCaml"
@@ -39,12 +45,26 @@ private class OCamlProjectStep(parent: NewProjectWizardStep) : AbstractNewProjec
     private val startDuneWatch = JBCheckBox("Run dune build --watch for richer diagnostics", true)
     private val opamSwitch = JBTextField()
     private val duneLanguageVersion = JBTextField(DEFAULT_DUNE_LANGUAGE_VERSION)
+    private val installedDuneVersion = JBLabel("Detecting...")
+    private val useInstalledDuneVersion = JButton("Use installed version").apply { isEnabled = false }
+    private val detectionGeneration = AtomicLong()
+    private val detectionTimer = Timer(400) { refreshDetectedDuneVersion() }.apply { isRepeats = false }
+    private var detectedDuneLanguageVersion: String? = null
 
     init {
         template.addActionListener { updateTemplateControls() }
-        useOpam.addActionListener { opamSwitch.isEnabled = useOpam.isSelected }
+        useOpam.addActionListener {
+            opamSwitch.isEnabled = useOpam.isSelected
+            scheduleDuneVersionDetection()
+        }
+        opamSwitch.document.addDocumentListener(object : DocumentAdapter() {
+            override fun textChanged(event: DocumentEvent) = scheduleDuneVersionDetection()
+        })
+        useInstalledDuneVersion.addActionListener {
+            detectedDuneLanguageVersion?.let { duneLanguageVersion.text = it }
+        }
         updateTemplateControls()
-        detectDuneLanguageVersion()
+        refreshDetectedDuneVersion()
     }
 
     override fun setupUI(builder: Panel) {
@@ -53,7 +73,11 @@ private class OCamlProjectStep(parent: NewProjectWizardStep) : AbstractNewProjec
         }
         builder.row("Dune language:") {
             cell(duneLanguageVersion)
-                .comment("Auto-detected from the installed Dune version; editable, for example 3.17.")
+                .comment("Minimum compatible Dune language version. Keep 3.0 unless newer syntax is required.")
+        }
+        builder.row("Installed Dune:") {
+            cell(installedDuneVersion)
+            cell(useInstalledDuneVersion)
         }
         builder.row {
             cell(addTests)
@@ -126,13 +150,23 @@ private class OCamlProjectStep(parent: NewProjectWizardStep) : AbstractNewProjec
         addTests.isEnabled = !isMinimal
     }
 
-    private fun detectDuneLanguageVersion() {
+    private fun scheduleDuneVersionDetection() {
+        installedDuneVersion.text = "Detecting..."
+        useInstalledDuneVersion.isEnabled = false
+        detectionTimer.restart()
+    }
+
+    private fun refreshDetectedDuneVersion() {
+        val generation = detectionGeneration.incrementAndGet()
+        val throughOpam = useOpam.isSelected
+        val selectedSwitch = opamSwitch.text.trim()
         AppExecutorUtil.getAppExecutorService().execute {
-            val detected = detectDefaultDuneLanguageVersion() ?: return@execute
+            val detected = detectDuneLanguageVersion(throughOpam, selectedSwitch)
             ApplicationManager.getApplication().invokeLater {
-                if (duneLanguageVersion.text == DEFAULT_DUNE_LANGUAGE_VERSION) {
-                    duneLanguageVersion.text = detected
-                }
+                if (detectionGeneration.get() != generation) return@invokeLater
+                detectedDuneLanguageVersion = detected
+                installedDuneVersion.text = detected ?: "Not available"
+                useInstalledDuneVersion.isEnabled = detected != null
             }
         }
     }

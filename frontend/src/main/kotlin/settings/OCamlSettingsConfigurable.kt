@@ -2,6 +2,7 @@ package dev.munormae.settings
 
 import com.intellij.openapi.options.Configurable
 import com.intellij.openapi.project.Project
+import com.intellij.util.messages.MessageBusConnection
 import com.intellij.ui.components.JBCheckBox
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBScrollPane
@@ -12,7 +13,10 @@ import java.awt.BorderLayout
 import javax.swing.JComponent
 import javax.swing.JButton
 import javax.swing.JPanel
-import javax.swing.Timer
+import dev.munormae.toolchain.OCamlToolchainStatusChangedListener
+import dev.munormae.toolchain.OCamlToolchainStatusService
+import dev.munormae.toolchain.OCamlToolchainStatusSnapshot
+import dev.munormae.toolchain.OCamlToolchainSettingsDto
 
 class OCamlSettingsConfigurable(private val project: Project) : Configurable {
     private var component: JPanel? = null
@@ -29,7 +33,7 @@ class OCamlSettingsConfigurable(private val project: Project) : Configurable {
     private var lspStatus: JBLabel? = null
     private var duneStatus: JBLabel? = null
     private var ocamlformatStatus: JBLabel? = null
-    private var statusTimer: Timer? = null
+    private var statusConnection: MessageBusConnection? = null
 
     override fun getDisplayName(): String = "OCaml"
 
@@ -48,7 +52,7 @@ class OCamlSettingsConfigurable(private val project: Project) : Configurable {
         duneStatus = JBLabel()
         ocamlformatStatus = JBLabel()
 
-        val autoDetect = JButton("Auto-detect from OPAM/PATH").apply {
+        val autoDetect = JButton("Use OPAM/PATH").apply {
             addActionListener {
                 opamExecutable?.text = ""
                 lspExecutable?.text = ""
@@ -59,6 +63,14 @@ class OCamlSettingsConfigurable(private val project: Project) : Configurable {
         }
         val refreshStatus = JButton("Refresh status").apply {
             addActionListener { requestToolchainRefresh() }
+        }
+
+        statusConnection?.disconnect()
+        statusConnection = project.messageBus.connect().apply {
+            subscribe(
+                OCamlToolchainStatusService.CHANGED_TOPIC,
+                OCamlToolchainStatusChangedListener(::updateStatusLabels),
+            )
         }
 
         lspEnabled!!.addActionListener { updateEnabledState() }
@@ -86,6 +98,7 @@ class OCamlSettingsConfigurable(private val project: Project) : Configurable {
                 add(autoDetect)
                 add(refreshStatus)
             })
+            .addComponent(JBLabel("Refresh tests the values above without applying or saving them."))
             .addComponent(
                 JBLabel(
                     "<html>Leave executable fields empty to use <code>opam</code>, " +
@@ -100,7 +113,6 @@ class OCamlSettingsConfigurable(private val project: Project) : Configurable {
             add(JBScrollPane(form).apply { border = JBUI.Borders.empty() }, BorderLayout.CENTER)
         }
         reset()
-        statusTimer = Timer(750) { updateStatusLabels() }.also { it.start() }
         return component!!
     }
 
@@ -162,8 +174,8 @@ class OCamlSettingsConfigurable(private val project: Project) : Configurable {
         lspStatus = null
         duneStatus = null
         ocamlformatStatus = null
-        statusTimer?.stop()
-        statusTimer = null
+        statusConnection?.disconnect()
+        statusConnection = null
     }
 
     private fun updateEnabledState() {
@@ -176,15 +188,28 @@ class OCamlSettingsConfigurable(private val project: Project) : Configurable {
         duneWatchEnabled?.isEnabled = enabled
         duneExecutable?.isEnabled = true
         ocamlformatExecutable?.isEnabled = true
-        updateStatusLabels()
+        updateStatusLabels(OCamlToolchainStatusService.getInstance(project).snapshot)
     }
 
-    private fun updateStatusLabels() {
-        val state = OCamlProjectSettings.getInstance(project).state
-        opamStatus?.text = state.opamStatus
-        lspStatus?.text = state.lspStatus
-        duneStatus?.text = state.duneStatus
-        ocamlformatStatus?.text = state.ocamlformatStatus
+    private fun updateStatusLabels(snapshot: OCamlToolchainStatusSnapshot) {
+        opamStatus?.text = snapshot.opam
+        lspStatus?.text = snapshot.ocamllsp
+        duneStatus?.text = snapshot.dune
+        ocamlformatStatus?.text = snapshot.ocamlformat
+    }
+
+    private fun requestToolchainRefresh() {
+        showDetectingStatus()
+        OCamlToolchainStatusService.getInstance(project).refresh(
+            OCamlToolchainSettingsDto(
+                useOpam = useOpam?.isSelected == true,
+                opamExecutable = opamExecutable.textValue(),
+                opamSwitch = opamSwitch.textValue(),
+                lspExecutable = lspExecutable.textValue(),
+                duneExecutable = duneExecutable.textValue(),
+                ocamlformatExecutable = ocamlformatExecutable.textValue(),
+            ),
+        )
     }
 
     private fun showDetectingStatus() {
@@ -192,14 +217,6 @@ class OCamlSettingsConfigurable(private val project: Project) : Configurable {
         lspStatus?.text = "Detecting..."
         duneStatus?.text = "Detecting..."
         ocamlformatStatus?.text = "Detecting..."
-    }
-
-    private fun requestToolchainRefresh() {
-        apply()
-        val settings = OCamlProjectSettings.getInstance(project)
-        settings.state.toolchainRefreshCounter++
-        settings.notifyChanged()
-        showDetectingStatus()
     }
 
     private fun JBTextField?.textValue(): String = this?.text?.trim().orEmpty()

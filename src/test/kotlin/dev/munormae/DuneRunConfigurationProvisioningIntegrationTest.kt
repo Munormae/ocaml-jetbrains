@@ -42,9 +42,49 @@ class DuneRunConfigurationProvisioningIntegrationTest : BasePlatformTestCase() {
         assertEquals(2, configurations.size)
         assertEquals(setOf(DuneCommand.BUILD, DuneCommand.EXEC), configurations.map { it.command }.toSet())
         assertEquals("./bin/main.exe", configurations.single { it.command == DuneCommand.EXEC }.target)
+        assertTrue(configurations.all { it.managedByPlugin })
+        assertTrue(configurations.all { it.modelId.startsWith("dune-model-v1|") })
         assertEquals(
             DuneCommand.EXEC,
             (runManager.selectedConfiguration?.configuration as DuneRunConfiguration).command,
         )
+    }
+
+    fun testProvisioningRemovesDisappearedManagedConfigurations() {
+        provisionDuneRunConfigurations(
+            project,
+            listOf(DuneRunConfigurationSpec(DuneCommand.EXEC, "Dune Run server", "./server.exe")),
+        )
+        provisionDuneRunConfigurations(
+            project,
+            listOf(DuneRunConfigurationSpec(DuneCommand.EXEC, "Dune Run api", "./api.exe")),
+        )
+
+        val configurations = RunManager.getInstance(project).allSettings
+            .mapNotNull { it.configuration as? DuneRunConfiguration }
+            .filter(DuneRunConfiguration::managedByPlugin)
+
+        assertEquals(listOf("./api.exe"), configurations.map { it.target })
+        assertTrue(configurations.single().managedByPlugin)
+    }
+
+    fun testProvisioningLeavesUserConfigurationsAlone() {
+        val configurationType = ConfigurationTypeUtil.findConfigurationType(DuneRunConfigurationType::class.java)
+        val factory = configurationType.configurationFactories.single { it.name == "Dune Build" }
+        val runManager = RunManager.getInstance(project)
+        val userSettings = runManager.createConfiguration("My Dune Build", factory)
+        val userConfiguration = userSettings.configuration as DuneRunConfiguration
+        userConfiguration.workingDirectory = "custom-root"
+        runManager.addConfiguration(userSettings)
+
+        provisionDuneRunConfigurations(
+            project,
+            listOf(DuneRunConfigurationSpec(DuneCommand.BUILD, "Dune Build")),
+        )
+        provisionDuneRunConfigurations(project, emptyList())
+
+        val remaining = runManager.allSettings.mapNotNull { it.configuration as? DuneRunConfiguration }
+        assertEquals(listOf(userConfiguration), remaining)
+        assertFalse(userConfiguration.managedByPlugin)
     }
 }

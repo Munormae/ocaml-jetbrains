@@ -5,7 +5,7 @@ authors: []
 license: "MIT"
 depends: [
   "ocaml"
-  "dune" {>= "3.17"}
+  "dune" {>= "${DUNE_LANGUAGE_VERSION}"}
 ]
 build: [
   ["dune" "build" "-p" name "-j" jobs]

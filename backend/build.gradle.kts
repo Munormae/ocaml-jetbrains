@@ -6,6 +6,7 @@ dependencies {
         bundledModule("intellij.platform.ide.impl")
         bundledModule("intellij.platform.lang.impl")
         bundledModule("intellij.platform.lsp")
+        bundledModule("intellij.platform.rpc.backend")
     }
 
     implementation(project(":shared"))

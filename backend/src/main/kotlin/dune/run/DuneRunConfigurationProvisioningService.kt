@@ -55,8 +55,8 @@ class DuneRunConfigurationProvisioningService(private val project: Project) : Di
 
     private fun refreshNow() {
         if (project.isDisposed || !TrustedProjects.isProjectTrusted(project)) return
-        val duneRoot = findDuneRoot(project.basePath) ?: return
-        val specs = discoverDuneRunConfigurations(project, duneRoot)
+        val duneRoot = findDuneRoot(project.basePath)
+        val specs = duneRoot?.let { discoverDuneRunConfigurations(project, it) }.orEmpty()
         ApplicationManager.getApplication().invokeLater {
             if (!project.isDisposed && TrustedProjects.isProjectTrusted(project)) {
                 provisionDuneRunConfigurations(project, specs)

@@ -13,8 +13,9 @@
 - Dune syntax highlighting, line comments, and parenthesis matching.
 - Trusted Projects enforcement and trust-state lifecycle handling for `ocamllsp` and Dune watch.
 - Live Dune run-configuration discovery backed by `dune describe workspace`, with a source-model fallback.
-- OPAM/PATH toolchain detection with version and status feedback in OCaml settings.
-- Automatic, editable Dune language-version selection in project and file templates.
+- OPAM/PATH toolchain detection with event-driven, transient version and status feedback in OCaml settings.
+- Editable Dune language-version selection in the project wizard, with selected-switch version detection and an explicit opt-in to the installed version.
+- A default Dune 3.0 language requirement for standalone Dune and OPAM file templates.
 
 ### Fixed
 
@@ -23,3 +24,10 @@
 - Dune run configurations use local executable targets and temporarily pause managed watch mode, so execution works reliably on Windows.
 - Multiline Dune strings preserve lexer state during incremental relexing.
 - CI now runs for both `main` and `master` pushes.
+- Release publishing no longer invokes the unconfigured `patchChangelog` task, and CI validates the publishing task used by the release workflow.
+- Dune Exec separates program arguments with `--`, so flags are passed to the executable instead of Dune.
+- Concurrent Run and Describe operations hold reference-counted pause leases and resume Dune Watch only after the final operation completes.
+- Automatically provisioned Dune configurations carry model ownership, reconcile changes, remove stale managed entries, and leave user configurations untouched.
+- Toolchain probe status is no longer persisted or synchronized as project settings; OPAM failures short-circuit dependent probes and independent checks run concurrently.
+- The project wizard probes Dune through the selected OPAM switch without automatically raising the generated project's compatibility requirement.
+- Dune discovery parsing and OCaml lexical highlighting have expanded regression and fixture coverage.

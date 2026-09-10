@@ -5,7 +5,7 @@ import org.junit.Test
 
 class SExpressionTest {
     @Test
-    fun `parser handles strings and all Dune comment forms`() {
+    fun `parser handles strings and supported S-expression comment forms`() {
         val expressions = parseSExpressions(
             """
                 ; line comment
@@ -26,5 +26,12 @@ class SExpressionTest {
         val root = parseSExpressions("((root \"C:\\\\Projects\\\\camel\"))").single() as SList
 
         assertEquals("C:\\Projects\\camel", root.field("root")?.atomValuesAfterHead()?.single())
+    }
+
+    @Test
+    fun `parser handles Dune quoted-string escapes and line continuation`() {
+        val atom = parseSExpressions("\"line\\n\\098\\x41\\\n   continued\"").single() as SAtom
+
+        assertEquals("line\nbAcontinued", atom.value)
     }
 }

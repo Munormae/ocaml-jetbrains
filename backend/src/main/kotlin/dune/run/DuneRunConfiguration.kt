@@ -30,6 +30,8 @@ class DuneRunConfigurationOptions : RunConfigurationOptions() {
     var duneArguments by string("")
     var programArguments by string("")
     var workingDirectory by string("")
+    var managedByPlugin by property(false)
+    var modelId by string("")
 }
 
 class DuneRunConfiguration(
@@ -65,6 +67,18 @@ class DuneRunConfiguration(
         get() = options.workingDirectory.orEmpty()
         set(value) {
             options.workingDirectory = value
+        }
+
+    var managedByPlugin: Boolean
+        get() = options.managedByPlugin
+        set(value) {
+            options.managedByPlugin = value
+        }
+
+    var modelId: String
+        get() = options.modelId.orEmpty()
+        set(value) {
+            options.modelId = value
         }
 
     override fun getConfigurationEditor(): SettingsEditor<DuneRunConfiguration> =
@@ -103,20 +117,17 @@ class DuneRunConfiguration(
         return object : CommandLineState(environment) {
             @Throws(ExecutionException::class)
             override fun startProcess(): ProcessHandler {
-                val watchService = DuneWatchService.getInstance(project)
-                val watchWasRunning = watchService.pauseForRunConfiguration()
+                val pauseLease = DuneWatchService.getInstance(project).acquirePause()
                 try {
                     return ColoredProcessHandler(commandLine).also { handler ->
-                        if (watchWasRunning) {
-                            handler.addProcessListener(object : ProcessListener {
-                                override fun processTerminated(event: ProcessEvent) {
-                                    watchService.resumeAfterRunConfiguration(true)
-                                }
-                            })
-                        }
+                        handler.addProcessListener(object : ProcessListener {
+                            override fun processTerminated(event: ProcessEvent) {
+                                pauseLease.close()
+                            }
+                        })
                     }
                 } catch (exception: Throwable) {
-                    watchService.resumeAfterRunConfiguration(watchWasRunning)
+                    pauseLease.close()
                     throw exception
                 }
             }
@@ -157,7 +168,11 @@ internal fun buildArguments(
         DuneCommand.BUILD, DuneCommand.TEST -> addAll(ParametersListUtil.parse(target))
         DuneCommand.EXEC -> {
             add(target.trim())
-            addAll(ParametersListUtil.parse(programArguments))
+            val parsedProgramArguments = ParametersListUtil.parse(programArguments)
+            if (parsedProgramArguments.isNotEmpty()) {
+                add("--")
+                addAll(parsedProgramArguments)
+            }
         }
     }
 }

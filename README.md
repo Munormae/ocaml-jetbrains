@@ -36,7 +36,7 @@ The plugin runs the language server as:
 opam exec -- ocamllsp
 ```
 
-An OPAM switch and explicit executable paths can be configured under **Settings | Languages & Frameworks | OCaml**. Leave a path empty to resolve the corresponding command from OPAM or `PATH`. The page shows detected versions and errors and can refresh or reset tool discovery in one click. No external OCaml tool is launched until the project is trusted.
+An OPAM switch and explicit executable paths can be configured under **Settings | Languages & Frameworks | OCaml**. Leave a path empty to resolve the corresponding command from OPAM or `PATH`. The page shows transient detected versions and errors and refreshes them after settings changes, project Trust, and project opening. External tools associated with an opened project are not launched until that project is trusted. The New Project Wizard may probe the locally installed Dune version without executing anything from the new project.
 
 Enable **Run dune build --watch for richer LSP diagnostics** for Dune projects when you want the plugin to keep Dune's RPC server and build information current. The managed process starts only for trusted projects containing `dune-project` or `dune-workspace` and stops with the project.
 
@@ -51,11 +51,11 @@ Choose **File | New | Project | OCaml**, then select one of these templates:
 - **Library**
 - **Executable + library**
 
-**Minimal** is the default and creates only `dune-project`, `dune`, `main.ml`, `.ocamlformat`, and `.gitignore`. The wizard detects the installed Dune language version, lets you override it, opens the main OCaml source file, and adds ready-to-use **Dune Build** and **Dune Run main** configurations. Project names are normalized to valid Dune package names.
+**Minimal** is the default and creates only `dune-project`, `dune`, `main.ml`, `.ocamlformat`, and `.gitignore`. The wizard defaults to the broadly compatible Dune language version 3.0, displays the Dune version from the selected OPAM switch (or `PATH`), and lets you opt into it explicitly. It opens the main OCaml source file and adds ready-to-use **Dune Build** and **Dune Run main** configurations. Project names are normalized to valid Dune package names.
 
 ## Creating files
 
-Right-click a project directory and choose **New | OCaml Module**. The dialog can create an implementation (`.ml`), an interface (`.mli`), or both with the same base name. The **New** menu also contains templates for `dune`, `dune-project`, `dune-workspace`, OPAM package files, and `.ocamlformat`.
+Right-click a project directory and choose **New | OCaml Module**. The dialog can create an implementation (`.ml`), an interface (`.mli`), or both with the same base name. The **New** menu also contains templates for `dune`, `dune-project`, `dune-workspace`, OPAM package files, and `.ocamlformat`; Dune/OPAM templates default their minimum Dune language requirement to 3.0.
 
 OCaml derives the compiled module name by capitalizing the first character of the file base name: `user_profile.ml` becomes `User_profile`, while `userProfile.ml` becomes `UserProfile`. Camel case works, but lowercase `snake_case` filenames are the conventional and more portable choice. Matching `.ml` and `.mli` files must use the same base name.
 

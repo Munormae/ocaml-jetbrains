@@ -8,6 +8,23 @@ import javax.xml.parsers.DocumentBuilderFactory
 
 class PluginDescriptorSmokeTest {
     @Test
+    fun `backend descriptor exposes the transient toolchain status RPC`() {
+        val descriptor = requireNotNull(
+            javaClass.classLoader.getResourceAsStream("ocaml.jetbrains.backend.xml"),
+        ) { "The packaged backend module descriptor is missing" }
+
+        val document = descriptor.use {
+            DocumentBuilderFactory.newInstance().newDocumentBuilder().parse(it)
+        }
+        val providers = document.getElementsByTagName("platform.rpc.backend.remoteApiProvider")
+        assertEquals("Exactly one toolchain RPC provider must be registered", 1, providers.length)
+        assertEquals(
+            "dev.munormae.toolchain.OCamlToolchainRpcApiProvider",
+            providers.item(0).attributes.getNamedItem("implementation").nodeValue,
+        )
+    }
+
+    @Test
     fun `backend descriptor loads the LSP module and provider`() {
         val descriptor = requireNotNull(
             javaClass.classLoader.getResourceAsStream("ocaml.jetbrains.backend.xml"),
@@ -45,6 +62,13 @@ class PluginDescriptorSmokeTest {
         assertEquals(
             "dev.munormae.project.OCamlNewProjectWizard",
             projectWizards.item(0).attributes.getNamedItem("implementation").nodeValue,
+        )
+
+        val templatePropertyProviders = document.getElementsByTagName("defaultTemplatePropertiesProvider")
+        assertEquals("Exactly one OCaml template-properties provider must be registered", 1, templatePropertyProviders.length)
+        assertEquals(
+            "dev.munormae.project.OCamlDuneTemplatePropertiesProvider",
+            templatePropertyProviders.item(0).attributes.getNamedItem("implementation").nodeValue,
         )
 
         val internalFileTemplates = document.getElementsByTagName("internalFileTemplate")

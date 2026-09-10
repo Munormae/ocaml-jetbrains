@@ -13,18 +13,24 @@ import com.intellij.openapi.project.Project
 import com.intellij.util.io.BaseOutputReader
 import dev.munormae.settings.OCamlProjectSettings
 import java.nio.file.Path
+import java.util.concurrent.atomic.AtomicBoolean
 
 class DuneWatchService(private val project: Project) : Disposable {
     private var runningWatch: RunningWatch? = null
+    private val pauseController = ReferenceCountedPauseController(
+        onFirstAcquire = ::pauseWatch,
+        onLastRelease = ::resumeWatch,
+    )
 
     @Synchronized
     fun refresh() {
         val state = OCamlProjectSettings.getInstance(project).state
         val root = findDuneRoot(project.basePath)
         if (!state.lspEnabled || !state.duneWatchEnabled || root == null || !TrustedProjects.isProjectTrusted(project)) {
-            stop()
+            if (!pauseController.isPaused) stop()
             return
         }
+        if (pauseController.isPaused) return
 
         val commandLine = createDuneWatchCommandLine(
             root = root,
@@ -47,9 +53,11 @@ class DuneWatchService(private val project: Project) : Disposable {
         start(root, commandLine)
     }
 
-    fun pauseForRunConfiguration(): Boolean {
+    fun acquirePause(): AutoCloseable = pauseController.acquire()
+
+    private fun pauseWatch() {
         val watch = synchronized(this) {
-            val current = runningWatch ?: return false
+            val current = runningWatch ?: return
             runningWatch = null
             current.stopRequested = true
             current
@@ -59,13 +67,16 @@ class DuneWatchService(private val project: Project) : Disposable {
             handler.destroyProcess()
         }
         if (!handler.waitFor(WATCH_STOP_TIMEOUT_MS)) {
-            LOG.warn("Dune watch did not stop within ${WATCH_STOP_TIMEOUT_MS}ms in ${watch.root}")
+            LOG.warn("Dune watch did not stop gracefully in ${watch.root}; killing it")
+            handler.forceKill()
+            if (!handler.waitFor(WATCH_FORCE_KILL_TIMEOUT_MS)) {
+                throw ExecutionException("Unable to stop Dune watch in ${watch.root}")
+            }
         }
-        return true
     }
 
-    fun resumeAfterRunConfiguration(wasRunning: Boolean) {
-        if (wasRunning && !project.isDisposed) refresh()
+    private fun resumeWatch() {
+        if (!project.isDisposed) refresh()
     }
 
     @Synchronized
@@ -108,15 +119,61 @@ class DuneWatchService(private val project: Project) : Disposable {
     private data class RunningWatch(
         val root: Path,
         val command: String,
-        val handler: OSProcessHandler,
+        val handler: DuneWatchProcessHandler,
         var stopRequested: Boolean = false,
     )
 
     companion object {
         private const val WATCH_STOP_TIMEOUT_MS = 5_000L
+        private const val WATCH_FORCE_KILL_TIMEOUT_MS = 2_000L
         private val LOG = Logger.getInstance(DuneWatchService::class.java)
 
         fun getInstance(project: Project): DuneWatchService = project.service()
+    }
+}
+
+internal class ReferenceCountedPauseController(
+    private val onFirstAcquire: () -> Unit,
+    private val onLastRelease: () -> Unit,
+) {
+    private var leaseCount = 0
+
+    @Volatile
+    var isPaused: Boolean = false
+        private set
+
+    @Synchronized
+    fun acquire(): AutoCloseable {
+        leaseCount++
+        if (leaseCount == 1) {
+            isPaused = true
+            try {
+                onFirstAcquire()
+            } catch (exception: Throwable) {
+                leaseCount = 0
+                isPaused = false
+                throw exception
+            }
+        }
+        return PauseLease(this)
+    }
+
+    @Synchronized
+    private fun release() {
+        check(leaseCount > 0) { "Dune watch pause lease released without a matching acquire" }
+        leaseCount--
+        if (leaseCount == 0) {
+            isPaused = false
+            onLastRelease()
+        }
+    }
+
+    private class PauseLease(private val controller: ReferenceCountedPauseController) : AutoCloseable {
+        private val closed = AtomicBoolean()
+
+        override fun close() {
+            if (closed.compareAndSet(false, true)) controller.release()
+        }
     }
 }
 
@@ -139,4 +196,8 @@ internal fun createDuneWatchCommandLine(
 
 private class DuneWatchProcessHandler(commandLine: GeneralCommandLine) : OSProcessHandler(commandLine) {
     override fun readerOptions(): BaseOutputReader.Options = BaseOutputReader.Options.forMostlySilentProcess()
+
+    fun forceKill() {
+        killProcessTree(process)
+    }
 }

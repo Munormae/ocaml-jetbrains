@@ -26,12 +26,25 @@ class DuneRunConfigurationTest {
     @Test
     fun `exec command keeps executable separate from program arguments`() {
         assertEquals(
-            listOf("exec", "--display", "quiet", "./bin/main.exe", "--verbose", "two words"),
+            listOf("exec", "--display", "quiet", "./bin/main.exe", "--", "--verbose", "two words"),
             buildArguments(
                 command = DuneCommand.EXEC,
                 target = " ./bin/main.exe ",
                 duneArguments = "--display quiet",
                 programArguments = "--verbose \"two words\"",
+            ),
+        )
+    }
+
+    @Test
+    fun `exec command omits separator when there are no program arguments`() {
+        assertEquals(
+            listOf("exec", "./bin/main.exe"),
+            buildArguments(
+                command = DuneCommand.EXEC,
+                target = "./bin/main.exe",
+                duneArguments = "",
+                programArguments = "",
             ),
         )
     }

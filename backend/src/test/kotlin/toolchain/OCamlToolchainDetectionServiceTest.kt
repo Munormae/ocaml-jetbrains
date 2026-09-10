@@ -2,6 +2,7 @@ package dev.munormae.toolchain
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class OCamlToolchainDetectionServiceTest {
@@ -20,5 +21,32 @@ class OCamlToolchainDetectionServiceTest {
         assertEquals(snapshot.opam, snapshot.ocamllsp)
         assertEquals(snapshot.opam, snapshot.dune)
         assertEquals(snapshot.opam, snapshot.ocamlformat)
+    }
+
+    @Test
+    fun `failed opam probe short circuits all opam-based tool probes`() {
+        val commands = mutableListOf<String>()
+        val snapshot = detectToolchain(
+            ToolchainSettingsSnapshot(true, "opam", "5.3.0", "", "", ""),
+            projectBasePath = null,
+        ) { commandLine, _, _ ->
+            commands += commandLine.commandLineString
+            ToolProbeResult("Unavailable")
+        }
+
+        assertEquals(1, commands.size)
+        assertTrue(commands.single().contains("opam --version"))
+        assertEquals("Unavailable because opam could not be started", snapshot.dune.status)
+    }
+
+    @Test
+    fun `wizard Dune probe uses the selected opam switch`() {
+        val command = createDuneVersionProbeCommand(useOpam = true, opamSwitch = " 5.1.1 ")
+
+        assertEquals("opam", command.exePath)
+        assertEquals(
+            listOf("exec", "--switch", "5.1.1", "--", "dune", "--version"),
+            command.parametersList.list,
+        )
     }
 }

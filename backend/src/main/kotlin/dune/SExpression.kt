@@ -70,19 +70,45 @@ private class SExpressionParser(private val text: String) {
                 current == '"' -> break
                 current == '\\' && offset < text.length -> {
                     val escaped = text[offset++]
-                    value.append(
-                        when (escaped) {
-                            'n' -> '\n'
-                            'r' -> '\r'
-                            't' -> '\t'
-                            else -> escaped
-                        },
-                    )
+                    when (escaped) {
+                        'n' -> value.append('\n')
+                        'r' -> value.append('\r')
+                        'b' -> value.append('\b')
+                        't' -> value.append('\t')
+                        '\n' -> skipContinuationIndent()
+                        '\r' -> {
+                            if (offset < text.length && text[offset] == '\n') offset++
+                            skipContinuationIndent()
+                        }
+                        'x' -> value.append(readHexEscape() ?: 'x')
+                        in '0'..'9' -> value.append(readDecimalEscape(escaped))
+                        else -> value.append(escaped)
+                    }
                 }
                 else -> value.append(current)
             }
         }
         return SAtom(value.toString())
+    }
+
+    private fun readDecimalEscape(first: Char): Char {
+        var digits = first.toString()
+        repeat(2) {
+            if (offset < text.length && text[offset].isDigit()) digits += text[offset++]
+        }
+        return digits.toIntOrNull()?.toChar() ?: first
+    }
+
+    private fun readHexEscape(): Char? {
+        if (offset + 2 > text.length) return null
+        val digits = text.substring(offset, offset + 2)
+        val code = digits.toIntOrNull(16) ?: return null
+        offset += 2
+        return code.toChar()
+    }
+
+    private fun skipContinuationIndent() {
+        while (offset < text.length && text[offset] in " \t") offset++
     }
 
     private fun parseAtom(): SAtom {
