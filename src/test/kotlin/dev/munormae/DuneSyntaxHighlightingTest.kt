@@ -39,6 +39,28 @@ class DuneSyntaxHighlightingTest {
     }
 
     @Test
+    fun `lexer highlights interpolation inside an atom`() {
+        val source = "foo-%{profile}-bar"
+        val lexer = DuneLexer()
+        lexer.start(source)
+        val tokens = buildList {
+            while (lexer.tokenType != null) {
+                add(source.substring(lexer.tokenStart, lexer.tokenEnd) to lexer.tokenType)
+                lexer.advance()
+            }
+        }
+
+        assertEquals(
+            listOf(
+                "foo-" to DuneTokenTypes.ATOM,
+                "%{profile}" to DuneTokenTypes.VARIABLE,
+                "-bar" to DuneTokenTypes.ATOM,
+            ),
+            tokens,
+        )
+    }
+
+    @Test
     fun `lexer preserves multiline string state for incremental restart`() {
         val source = "\"first line\\\nsecond line\nthird line\" tail"
         val lexer = DuneLexer()

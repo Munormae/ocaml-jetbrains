@@ -145,6 +145,105 @@ class OCamlLexerGoldenTest {
         )
     }
 
+    @Test
+    fun `raw identifiers are never highlighted as keywords`() {
+        assertEquals(
+            listOf(
+                "let" to OCamlTokenTypes.KEYWORD,
+                "#let" to OCamlTokenTypes.IDENTIFIER,
+                "=" to OCamlTokenTypes.OPERATOR,
+                "#foo" to OCamlTokenTypes.IDENTIFIER,
+                "in" to OCamlTokenTypes.KEYWORD,
+                "effect" to OCamlTokenTypes.KEYWORD,
+            ),
+            lex("let #let = #foo in effect"),
+        )
+    }
+
+    @Test
+    fun `quoted string markers only contain lowercase letters and underscores`() {
+        assertEquals(
+            listOf("{valid_marker|contents|valid_marker}" to OCamlTokenTypes.STRING),
+            lex("{valid_marker|contents|valid_marker}"),
+        )
+
+        for (invalid in listOf("{Upper|contents|Upper}", "{id1|contents|id1}", "{id'|contents|id'}")) {
+            assertTrue("$invalid must not be a quoted string", lex(invalid).none { it.second == OCamlTokenTypes.STRING })
+        }
+    }
+
+    @Test
+    fun `numeric literals stop at grammar boundaries`() {
+        assertEquals(
+            listOf(
+                "1." to OCamlTokenTypes.NUMBER,
+                "." to OCamlTokenTypes.OPERATOR,
+                "2" to OCamlTokenTypes.NUMBER,
+                "123" to OCamlTokenTypes.NUMBER,
+                "foobar" to OCamlTokenTypes.IDENTIFIER,
+                "0xFFL" to OCamlTokenTypes.NUMBER,
+                "0o17n" to OCamlTokenTypes.NUMBER,
+                "0b101l" to OCamlTokenTypes.NUMBER,
+                "1e+2" to OCamlTokenTypes.NUMBER,
+                "0x1.fp-3" to OCamlTokenTypes.NUMBER,
+            ),
+            lex("1..2 123foobar 0xFFL 0o17n 0b101l 1e+2 0x1.fp-3"),
+        )
+    }
+
+    @Test
+    fun `comment delimiters inside quoted strings do not close the comment`() {
+        val source = """
+            (*
+              let x = {foo| *) |foo}
+              let y = 123
+            *)
+            let live = true
+        """.trimIndent()
+
+        val tokens = lex(source)
+
+        assertTrue(tokens.dropLast(4).all { it.second == OCamlTokenTypes.COMMENT })
+        assertEquals(
+            listOf(
+                "let" to OCamlTokenTypes.KEYWORD,
+                "live" to OCamlTokenTypes.IDENTIFIER,
+                "=" to OCamlTokenTypes.OPERATOR,
+                "true" to OCamlTokenTypes.KEYWORD,
+            ),
+            tokens.takeLast(4),
+        )
+    }
+
+    @Test
+    fun `quoted string marker recovery reads a large buffer linearly`() {
+        val activeMarker = "klwfqlsre"
+        val collidingMarker = "wvizyvybq"
+        val stateSource = "{$activeMarker|first line\nsecond line|$activeMarker}"
+        val stateLexer = OCamlLexer()
+        stateLexer.start(stateSource)
+        stateLexer.advance()
+        val continuationState = stateLexer.state
+
+        val source = buildString {
+            append("{$activeMarker|")
+            repeat(2_000) { append("{$collidingMarker|") }
+            append("|$collidingMarker}\ncontinuation|$activeMarker}")
+        }
+        val restartOffset = source.indexOf("continuation")
+        val countingBuffer = CountingCharSequence(source)
+        val lexer = OCamlLexer()
+
+        lexer.start(countingBuffer, restartOffset, source.length, continuationState)
+
+        assertEquals(OCamlTokenTypes.STRING, lexer.tokenType)
+        assertEquals(source.length, lexer.tokenEnd)
+        assertTrue(
+            "Expected linear recovery, read ${countingBuffer.readCount} characters for ${source.length} input characters",
+            countingBuffer.readCount < source.length * 50L,
+        )
+    }
+
     private fun lex(source: String): List<Pair<String, IElementType>> {
         val lexer = OCamlLexer()
         lexer.start(source)
@@ -156,5 +255,21 @@ class OCamlLexerGoldenTest {
                 lexer.advance()
             }
         }
+    }
+
+    private class CountingCharSequence(private val delegate: String) : CharSequence {
+        var readCount: Long = 0
+            private set
+
+        override val length: Int
+            get() = delegate.length
+
+        override fun get(index: Int): Char {
+            readCount++
+            return delegate[index]
+        }
+
+        override fun subSequence(startIndex: Int, endIndex: Int): CharSequence =
+            delegate.subSequence(startIndex, endIndex)
     }
 }

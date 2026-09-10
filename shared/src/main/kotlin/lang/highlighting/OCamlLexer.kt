@@ -73,7 +73,8 @@ class OCamlLexer : LexerBase() {
             first == '"' -> scanString(openingQuote = true)
             first == '{' && scanQuotedStringExtension() -> Unit
             first == '\'' -> scanCharacterOrTypeVariable()
-            first.isDigit() -> scanNumber()
+            first in '0'..'9' -> scanNumber()
+            first == '#' && peek(1)?.isOcamlLowercaseIdentifierStart() == true -> scanRawIdentifier()
             first == '~' || first == '?' -> scanLabelOrOperator()
             first == '[' && (peek(1) == '@' || peek(1) == '%') -> scanAttribute()
             first.isIdentifierStart() -> scanIdentifier()
@@ -141,6 +142,23 @@ class OCamlLexer : LexerBase() {
                 buffer[tokenEnd] == '\'' -> {
                     val characterEnd = findCharacterLiteralEnd(tokenEnd)
                     tokenEnd = if (characterEnd >= 0) characterEnd + 1 else tokenEnd + 1
+                }
+
+                buffer[tokenEnd] == '{' -> {
+                    val opening = quotedStringOpeningAt(tokenEnd)
+                    if (opening == null) {
+                        tokenEnd++
+                    } else {
+                        val terminator = "|${opening.marker}}"
+                        val terminatorStart = indexOf(terminator, opening.contentStart)
+                        if (terminatorStart < 0) {
+                            tokenEnd = bufferEnd
+                            nextState = commentState(depth, COMMENT_CODE_MODE)
+                            tokenType = OCamlTokenTypes.COMMENT
+                            return
+                        }
+                        tokenEnd = terminatorStart + terminator.length
+                    }
                 }
 
                 buffer[tokenEnd] == '\n' || buffer[tokenEnd] == '\r' -> {
@@ -221,19 +239,28 @@ class OCamlLexer : LexerBase() {
     }
 
     private fun recoverQuotedStringMarker(startOffset: Int, state: Int): String? {
+        val closedMarkers = mutableSetOf<String>()
         for (index in startOffset - 1 downTo 0) {
+            quotedStringClosingAt(index)?.let(closedMarkers::add)
             val opening = quotedStringOpeningAt(index) ?: continue
             if (quotedStringState(opening.marker) != state) continue
-            val terminatorStart = indexOf("|${opening.marker}}", opening.contentStart)
-            if (terminatorStart < 0 || startOffset <= terminatorStart) return opening.marker
+            if (opening.marker !in closedMarkers) return opening.marker
         }
         return null
+    }
+
+    private fun quotedStringClosingAt(offset: Int): String? {
+        if (buffer.getOrNull(offset) != '|' || offset >= bufferEnd) return null
+        var markerEnd = offset + 1
+        while (markerEnd < bufferEnd && buffer[markerEnd].isQuotedStringMarkerChar()) markerEnd++
+        if (markerEnd >= bufferEnd || buffer[markerEnd] != '}') return null
+        return buffer.subSequence(offset + 1, markerEnd).toString()
     }
 
     private fun quotedStringOpeningAt(offset: Int): QuotedStringOpening? {
         if (buffer.getOrNull(offset) != '{' || offset >= bufferEnd) return null
         var markerEnd = offset + 1
-        while (markerEnd < bufferEnd && buffer[markerEnd].isIdentifierPart()) markerEnd++
+        while (markerEnd < bufferEnd && buffer[markerEnd].isQuotedStringMarkerChar()) markerEnd++
         if (markerEnd >= bufferEnd || buffer[markerEnd] != '|') return null
         return QuotedStringOpening(
             marker = buffer.subSequence(offset + 1, markerEnd).toString(),
@@ -289,20 +316,79 @@ class OCamlLexer : LexerBase() {
     }
 
     private fun scanNumber() {
-        tokenEnd = tokenStart + 1
-        while (tokenEnd < bufferEnd) {
-            val current = buffer[tokenEnd]
-            if (current.isLetterOrDigit() || current == '_' || current == '.' ||
-                current == '\'' || current in "+-" && isExponentContext(tokenEnd)
-            ) tokenEnd++ else break
+        val firstDigit = tokenStart
+        tokenEnd = when {
+            startsWithAt("0x", firstDigit) || startsWithAt("0X", firstDigit) ->
+                scanHexNumber(firstDigit)
+
+            startsWithAt("0o", firstDigit) || startsWithAt("0O", firstDigit) ->
+                scanRadixInteger(firstDigit, 2) { it in '0'..'7' }
+
+            startsWithAt("0b", firstDigit) || startsWithAt("0B", firstDigit) ->
+                scanRadixInteger(firstDigit, 2) { it == '0' || it == '1' }
+
+            else -> scanDecimalNumber(firstDigit)
         }
         tokenType = OCamlTokenTypes.NUMBER
     }
 
-    private fun isExponentContext(index: Int): Boolean {
-        val current = buffer[index]
-        if (current !in "+-") return true
-        return index > tokenStart && buffer[index - 1] in "eEpP"
+    private fun scanDecimalNumber(firstDigit: Int): Int {
+        var index = consumeNumberDigits(firstDigit) { it in '0'..'9' }
+        var isFloat = false
+        if (buffer.getOrNull(index) == '.') {
+            isFloat = true
+            index = consumeNumberDigits(index + 1, requireFirstDigit = false) { it in '0'..'9' }
+        }
+        val exponentEnd = scanExponent(index, "eE")
+        if (exponentEnd != index) {
+            isFloat = true
+            index = exponentEnd
+        }
+        return if (!isFloat && buffer.getOrNull(index)?.let { it in INTEGER_SUFFIXES } == true) index + 1 else index
+    }
+
+    private fun scanHexNumber(firstDigit: Int): Int {
+        val digitsStart = firstDigit + 2
+        if (buffer.getOrNull(digitsStart)?.isHexDigit() != true) return firstDigit + 1
+
+        var index = consumeNumberDigits(digitsStart, accepts = { it.isHexDigit() })
+        var isFloat = false
+        if (buffer.getOrNull(index) == '.') {
+            isFloat = true
+            index = consumeNumberDigits(index + 1, requireFirstDigit = false) { it.isHexDigit() }
+        }
+        val exponentEnd = scanExponent(index, "pP")
+        if (exponentEnd != index) {
+            isFloat = true
+            index = exponentEnd
+        }
+        return if (!isFloat && buffer.getOrNull(index)?.let { it in INTEGER_SUFFIXES } == true) index + 1 else index
+    }
+
+    private fun scanRadixInteger(firstDigit: Int, prefixLength: Int, accepts: (Char) -> Boolean): Int {
+        val digitsStart = firstDigit + prefixLength
+        if (buffer.getOrNull(digitsStart)?.let(accepts) != true) return firstDigit + 1
+        val end = consumeNumberDigits(digitsStart, accepts = accepts)
+        return if (buffer.getOrNull(end)?.let { it in INTEGER_SUFFIXES } == true) end + 1 else end
+    }
+
+    private fun scanExponent(startOffset: Int, markers: String): Int {
+        if (buffer.getOrNull(startOffset)?.let { it in markers } != true) return startOffset
+        var digitsStart = startOffset + 1
+        if (buffer.getOrNull(digitsStart) == '+' || buffer.getOrNull(digitsStart) == '-') digitsStart++
+        if (buffer.getOrNull(digitsStart)?.let { it in '0'..'9' } != true) return startOffset
+        return consumeNumberDigits(digitsStart) { it in '0'..'9' }
+    }
+
+    private fun consumeNumberDigits(
+        startOffset: Int,
+        requireFirstDigit: Boolean = true,
+        accepts: (Char) -> Boolean,
+    ): Int {
+        if (requireFirstDigit && buffer.getOrNull(startOffset)?.let(accepts) != true) return startOffset
+        var index = startOffset
+        while (index < bufferEnd && (accepts(buffer[index]) || buffer[index] == '_')) index++
+        return index
     }
 
     private fun scanLabelOrOperator() {
@@ -333,6 +419,12 @@ class OCamlLexer : LexerBase() {
             text.firstOrNull()?.isUpperCase() == true -> OCamlTokenTypes.CONSTRUCTOR
             else -> OCamlTokenTypes.IDENTIFIER
         }
+    }
+
+    private fun scanRawIdentifier() {
+        tokenEnd = tokenStart + 2
+        while (tokenEnd < bufferEnd && buffer[tokenEnd].isIdentifierPart()) tokenEnd++
+        tokenType = OCamlTokenTypes.IDENTIFIER
     }
 
     private fun scanPunctuationOrOperator(first: Char) {
@@ -372,11 +464,24 @@ class OCamlLexer : LexerBase() {
         return value.indices.all { buffer[offset + it] == value[it] }
     }
 
+    private fun startsWithAt(value: String, offset: Int): Boolean = startsWith(value, offset)
+
     private fun peek(delta: Int): Char? =
         buffer.getOrNull(tokenStart + delta)?.takeIf { tokenStart + delta < bufferEnd }
 
     private fun Char.isIdentifierStart(): Boolean = this == '_' || isLetter()
     private fun Char.isIdentifierPart(): Boolean = this == '_' || this == '\'' || isLetterOrDigit()
+    private fun Char.isOcamlLowercaseIdentifierStart(): Boolean = this == '_' || isOcamlLowercaseLetter()
+    private fun Char.isQuotedStringMarkerChar(): Boolean = this == '_' || isOcamlLowercaseLetter()
+    private fun Char.isOcamlLowercaseLetter(): Boolean =
+        this in 'a'..'z' ||
+            this in '\u00df'..'\u00f6' ||
+            this in '\u00f8'..'\u00ff' ||
+            this == '\u0153' ||
+            this == '\u0161' ||
+            this == '\u017e'
+
+    private fun Char.isHexDigit(): Boolean = this in '0'..'9' || lowercaseChar() in 'a'..'f'
 
     private data class QuotedStringOpening(
         val marker: String,
@@ -422,12 +527,13 @@ class OCamlLexer : LexerBase() {
 
         private val KEYWORDS = setOf(
             "and", "as", "assert", "asr", "begin", "class", "constraint", "do", "done", "downto",
-            "else", "end", "exception", "external", "false", "for", "fun", "function", "functor", "if",
+            "effect", "else", "end", "exception", "external", "false", "for", "fun", "function", "functor", "if",
             "in", "include", "inherit", "initializer", "land", "lazy", "let", "lor", "lsl", "lsr", "lxor",
             "match", "method", "mod", "module", "mutable", "new", "nonrec", "object", "of", "open", "or",
             "private", "rec", "sig", "struct", "then", "to", "true", "try", "type", "val", "virtual",
             "when", "while", "with",
         )
+        private const val INTEGER_SUFFIXES = "lLn"
         private const val OPERATOR_CHARS = "!\$%&*+-./:<=>?@^|~#;,:`"
     }
 }

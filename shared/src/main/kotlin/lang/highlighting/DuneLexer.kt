@@ -109,7 +109,10 @@ class DuneLexer : LexerBase() {
 
     private fun scanAtom() {
         tokenEnd = tokenStart + 1
-        while (tokenEnd < bufferEnd && buffer[tokenEnd] !in ATOM_DELIMITERS) tokenEnd++
+        while (tokenEnd < bufferEnd && buffer[tokenEnd] !in ATOM_DELIMITERS) {
+            if (buffer[tokenEnd] == '%' && buffer.getOrNull(tokenEnd + 1) == '{') break
+            tokenEnd++
+        }
         val text = buffer.subSequence(tokenStart, tokenEnd).toString()
         tokenType = when {
             text in KEYWORDS || text.startsWith(':') -> DuneTokenTypes.KEYWORD

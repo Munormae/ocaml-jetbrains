@@ -59,6 +59,17 @@ fun provisionDuneRunConfigurations(
             continue
         }
 
+        val relocatedSettings = findRelocatedManagedConfiguration(
+            runManager.allSettings,
+            desired,
+            desiredModelIds,
+            spec,
+        )
+        if (relocatedSettings != null) {
+            updateManagedConfiguration(relocatedSettings, spec, desiredModelId, relocatedSettings.name)
+            continue
+        }
+
         val legacySettings = spec.legacyTarget.takeIf { it.isNotEmpty() }?.let { legacyTarget ->
             runManager.allSettings
                 .firstOrNull { settings ->
@@ -117,6 +128,23 @@ private data class DesiredDuneConfiguration(
     val modelId: String,
 )
 
+private fun findRelocatedManagedConfiguration(
+    settings: List<RunnerAndConfigurationSettings>,
+    desired: List<DesiredDuneConfiguration>,
+    desiredModelIds: Set<String>,
+    spec: DuneRunConfigurationSpec,
+): RunnerAndConfigurationSettings? {
+    if (desired.count { it.spec.command == spec.command && it.spec.name == spec.name } != 1) return null
+
+    return settings.filter { entry ->
+        val configuration = entry.configuration as? DuneRunConfiguration ?: return@filter false
+        configuration.managedByPlugin &&
+            configuration.modelId !in desiredModelIds &&
+            configuration.command == spec.command &&
+            configuration.lastGeneratedModelName == spec.name
+    }.singleOrNull()
+}
+
 private fun normalizeManagedOwnership(
     project: Project,
     settings: List<RunnerAndConfigurationSettings>,
@@ -169,8 +197,10 @@ private fun isPreOwnershipGeneratedConfiguration(
     settings: RunnerAndConfigurationSettings,
     spec: DuneRunConfigurationSpec,
 ): Boolean {
-    val legacyTarget = spec.legacyTarget.takeIf(String::isNotEmpty) ?: return false
     val configuration = settings.configuration as? DuneRunConfiguration ?: return false
+    val configuredTarget = configuration.target.trim()
+    val matchesGeneratedTarget = configuredTarget == spec.target.trim() ||
+        spec.legacyTarget.isNotEmpty() && configuredTarget == spec.legacyTarget.trim()
     return !configuration.managedByPlugin &&
         configuration.modelId.isEmpty() &&
         configuration.lastGeneratedName.isEmpty() &&
@@ -178,7 +208,7 @@ private fun isPreOwnershipGeneratedConfiguration(
         configuration.command == spec.command &&
         configuration.duneArguments.isBlank() &&
         configuration.programArguments.isBlank() &&
-        configuration.target.trim() == legacyTarget.trim() &&
+        matchesGeneratedTarget &&
         canonicalWorkingDirectory(project, configuration.workingDirectory) ==
         canonicalWorkingDirectory(project, spec.workingDirectory)
 }

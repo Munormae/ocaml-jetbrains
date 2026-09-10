@@ -134,6 +134,35 @@ class DuneRunConfigurationProvisioningIntegrationTest : BasePlatformTestCase() {
         assertEquals(project.basePath.orEmpty(), legacyConfiguration.lastGeneratedWorkingDirectory)
     }
 
+    fun testProvisioningAdoptsPreOwnershipExecutableWithoutPublicName() {
+        val runManager = RunManager.getInstance(project)
+        val configurationType = ConfigurationTypeUtil.findConfigurationType(DuneRunConfigurationType::class.java)
+        val factory = configurationType.configurationFactories.single { it.name == "Dune Exec" }
+        val legacySettings = runManager.createConfiguration("Dune Run server", factory)
+        val legacyConfiguration = legacySettings.configuration as DuneRunConfiguration
+        legacyConfiguration.target = "./server.exe"
+        legacyConfiguration.workingDirectory = project.basePath.orEmpty()
+        runManager.addConfiguration(legacySettings)
+
+        provisionDuneRunConfigurations(
+            project,
+            listOf(
+                DuneRunConfigurationSpec(
+                    DuneCommand.EXEC,
+                    "Dune Run server",
+                    "./server.exe",
+                    project.basePath.orEmpty(),
+                ),
+            ),
+        )
+
+        val configurations = runManager.allSettings
+            .mapNotNull { it.configuration as? DuneRunConfiguration }
+        assertEquals(listOf(legacyConfiguration), configurations)
+        assertTrue(legacyConfiguration.managedByPlugin)
+        assertTrue(legacyConfiguration.modelId.startsWith("dune-model-v1|"))
+    }
+
     fun testProgramArgumentsDetachManagedConfigurationBeforeStaleRemoval() {
         val spec = DuneRunConfigurationSpec(
             DuneCommand.EXEC,
@@ -197,6 +226,27 @@ class DuneRunConfigurationProvisioningIntegrationTest : BasePlatformTestCase() {
         assertEquals(1, runManager.allSettings.size)
         assertEquals("Dune Run new-name", settings.name)
         assertEquals("Dune Run new-name", configuration.lastGeneratedName)
+        assertTrue(configuration.managedByPlugin)
+    }
+
+    fun testUntouchedManagedConfigurationMovesWithoutUniqueNameSuffix() {
+        val workingDirectory = project.basePath.orEmpty()
+        provisionDuneRunConfigurations(
+            project,
+            listOf(DuneRunConfigurationSpec(DuneCommand.EXEC, "Dune Run main", "./bin/main.exe", workingDirectory)),
+        )
+        val runManager = RunManager.getInstance(project)
+        val settings = runManager.allSettings.single()
+
+        provisionDuneRunConfigurations(
+            project,
+            listOf(DuneRunConfigurationSpec(DuneCommand.EXEC, "Dune Run main", "./app/main.exe", workingDirectory)),
+        )
+
+        val configuration = settings.configuration as DuneRunConfiguration
+        assertEquals(listOf(settings), runManager.allSettings)
+        assertEquals("Dune Run main", settings.name)
+        assertEquals("./app/main.exe", configuration.target)
         assertTrue(configuration.managedByPlugin)
     }
 
