@@ -32,6 +32,10 @@ class DuneRunConfigurationOptions : RunConfigurationOptions() {
     var workingDirectory by string("")
     var managedByPlugin by property(false)
     var modelId by string("")
+    var lastGeneratedName by string("")
+    var lastGeneratedModelName by string("")
+    var lastGeneratedTarget by string("")
+    var lastGeneratedWorkingDirectory by string("")
 }
 
 class DuneRunConfiguration(
@@ -79,6 +83,30 @@ class DuneRunConfiguration(
         get() = options.modelId.orEmpty()
         set(value) {
             options.modelId = value
+        }
+
+    var lastGeneratedName: String
+        get() = options.lastGeneratedName.orEmpty()
+        set(value) {
+            options.lastGeneratedName = value
+        }
+
+    var lastGeneratedModelName: String
+        get() = options.lastGeneratedModelName.orEmpty()
+        set(value) {
+            options.lastGeneratedModelName = value
+        }
+
+    var lastGeneratedTarget: String
+        get() = options.lastGeneratedTarget.orEmpty()
+        set(value) {
+            options.lastGeneratedTarget = value
+        }
+
+    var lastGeneratedWorkingDirectory: String
+        get() = options.lastGeneratedWorkingDirectory.orEmpty()
+        set(value) {
+            options.lastGeneratedWorkingDirectory = value
         }
 
     override fun getConfigurationEditor(): SettingsEditor<DuneRunConfiguration> =

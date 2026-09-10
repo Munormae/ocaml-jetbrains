@@ -6,7 +6,7 @@ import org.junit.Test
 
 class OCamlToolchainStatusSnapshotTest {
     @Test
-    fun `transient toolchain status preserves all fields for split-mode RPC`() {
+    fun `toolchain status snapshot preserves every tool value`() {
         val snapshot = OCamlToolchainStatusSnapshot("opam", "ocamllsp", "dune", "ocamlformat")
 
         assertEquals("opam", snapshot.opam)

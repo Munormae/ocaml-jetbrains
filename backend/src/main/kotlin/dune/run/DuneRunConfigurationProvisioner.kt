@@ -39,7 +39,9 @@ fun provisionDuneRunConfigurations(
     val desired = specs
         .map { spec -> DesiredDuneConfiguration(spec, modelId(project, spec)) }
         .distinctBy(DesiredDuneConfiguration::modelId)
+    val desiredByModelId = desired.associateBy(DesiredDuneConfiguration::modelId)
     val desiredModelIds = desired.mapTo(mutableSetOf(), DesiredDuneConfiguration::modelId)
+    normalizeManagedOwnership(project, runManager.allSettings, desiredByModelId)
 
     for ((spec, desiredModelId) in desired) {
         val managedSettings = runManager.allSettings.firstOrNull { settings ->
@@ -47,14 +49,20 @@ fun provisionDuneRunConfigurations(
             configuration.managedByPlugin && configuration.modelId == desiredModelId
         }
         if (managedSettings != null) {
-            updateManagedConfiguration(managedSettings, spec, desiredModelId)
+            val configuration = managedSettings.configuration as DuneRunConfiguration
+            val generatedName = if (configuration.lastGeneratedModelName == spec.name) {
+                managedSettings.name
+            } else {
+                runManager.suggestUniqueName(spec.name, configurationType)
+            }
+            updateManagedConfiguration(managedSettings, spec, desiredModelId, generatedName)
             continue
         }
 
-        val legacyConfiguration = spec.legacyTarget.takeIf { it.isNotEmpty() }?.let { legacyTarget ->
+        val legacySettings = spec.legacyTarget.takeIf { it.isNotEmpty() }?.let { legacyTarget ->
             runManager.allSettings
-                .mapNotNull { it.configuration as? DuneRunConfiguration }
-                .firstOrNull { configuration ->
+                .firstOrNull { settings ->
+                    val configuration = settings.configuration as? DuneRunConfiguration ?: return@firstOrNull false
                     configuration.managedByPlugin &&
                         configuration.command == spec.command &&
                         configuration.target == legacyTarget &&
@@ -62,13 +70,18 @@ fun provisionDuneRunConfigurations(
                         canonicalWorkingDirectory(project, spec.workingDirectory)
                 }
         }
-        if (legacyConfiguration != null) {
-            legacyConfiguration.target = spec.target
-            legacyConfiguration.workingDirectory = spec.workingDirectory
-            legacyConfiguration.modelId = desiredModelId
+        if (legacySettings != null) {
+            updateManagedConfiguration(legacySettings, spec, desiredModelId, legacySettings.name)
             continue
         }
 
+        val preOwnershipSettings = runManager.allSettings.firstOrNull { settings ->
+            isPreOwnershipGeneratedConfiguration(project, settings, spec)
+        }
+        if (preOwnershipSettings != null) {
+            updateManagedConfiguration(preOwnershipSettings, spec, desiredModelId, preOwnershipSettings.name)
+            continue
+        }
 
         val equivalentUserConfigurationExists = runManager.allSettings.any { settings ->
             val configuration = settings.configuration as? DuneRunConfiguration ?: return@any false
@@ -83,11 +96,7 @@ fun provisionDuneRunConfigurations(
         val factory = factories[spec.command] ?: continue
         val uniqueName = runManager.suggestUniqueName(spec.name, configurationType)
         val settings = runManager.createConfiguration(uniqueName, factory)
-        val configuration = settings.configuration as DuneRunConfiguration
-        configuration.target = spec.target
-        configuration.workingDirectory = spec.workingDirectory
-        configuration.managedByPlugin = true
-        configuration.modelId = desiredModelId
+        updateManagedConfiguration(settings, spec, desiredModelId, uniqueName)
         runManager.addConfiguration(settings)
     }
 
@@ -108,15 +117,105 @@ private data class DesiredDuneConfiguration(
     val modelId: String,
 )
 
+private fun normalizeManagedOwnership(
+    project: Project,
+    settings: List<RunnerAndConfigurationSettings>,
+    desiredByModelId: Map<String, DesiredDuneConfiguration>,
+) {
+    for (entry in settings) {
+        val configuration = entry.configuration as? DuneRunConfiguration ?: continue
+        if (!configuration.managedByPlugin) continue
+
+        if (configuration.lastGeneratedName.isNotEmpty()) {
+            if (isCustomized(entry, configuration)) detach(configuration)
+            continue
+        }
+
+        val desired = desiredByModelId[configuration.modelId]
+        if (desired != null && matchesUntouchedGeneratedConfiguration(project, entry, configuration, desired.spec)) {
+            recordGeneratedBaseline(entry, configuration, desired.spec)
+        } else {
+            detach(configuration)
+        }
+    }
+}
+
+private fun isCustomized(
+    settings: RunnerAndConfigurationSettings,
+    configuration: DuneRunConfiguration,
+): Boolean =
+    settings.name != configuration.lastGeneratedName ||
+        configuration.target != configuration.lastGeneratedTarget ||
+        configuration.workingDirectory != configuration.lastGeneratedWorkingDirectory ||
+        configuration.duneArguments.isNotBlank() ||
+        configuration.programArguments.isNotBlank()
+
+private fun matchesUntouchedGeneratedConfiguration(
+    project: Project,
+    settings: RunnerAndConfigurationSettings,
+    configuration: DuneRunConfiguration,
+    spec: DuneRunConfigurationSpec,
+): Boolean =
+    settings.name == spec.name &&
+        configuration.command == spec.command &&
+        configuration.target.trim() == spec.target.trim() &&
+        canonicalWorkingDirectory(project, configuration.workingDirectory) ==
+        canonicalWorkingDirectory(project, spec.workingDirectory) &&
+        configuration.duneArguments.isBlank() &&
+        configuration.programArguments.isBlank()
+
+private fun isPreOwnershipGeneratedConfiguration(
+    project: Project,
+    settings: RunnerAndConfigurationSettings,
+    spec: DuneRunConfigurationSpec,
+): Boolean {
+    val legacyTarget = spec.legacyTarget.takeIf(String::isNotEmpty) ?: return false
+    val configuration = settings.configuration as? DuneRunConfiguration ?: return false
+    return !configuration.managedByPlugin &&
+        configuration.modelId.isEmpty() &&
+        configuration.lastGeneratedName.isEmpty() &&
+        settings.name == spec.name &&
+        configuration.command == spec.command &&
+        configuration.duneArguments.isBlank() &&
+        configuration.programArguments.isBlank() &&
+        configuration.target.trim() == legacyTarget.trim() &&
+        canonicalWorkingDirectory(project, configuration.workingDirectory) ==
+        canonicalWorkingDirectory(project, spec.workingDirectory)
+}
+
+private fun detach(configuration: DuneRunConfiguration) {
+    configuration.managedByPlugin = false
+    configuration.modelId = ""
+    configuration.lastGeneratedName = ""
+    configuration.lastGeneratedModelName = ""
+    configuration.lastGeneratedTarget = ""
+    configuration.lastGeneratedWorkingDirectory = ""
+}
+
 private fun updateManagedConfiguration(
     settings: RunnerAndConfigurationSettings,
     spec: DuneRunConfigurationSpec,
     modelId: String,
+    generatedName: String,
 ) {
     val configuration = settings.configuration as DuneRunConfiguration
+    settings.name = generatedName
     configuration.target = spec.target
     configuration.workingDirectory = spec.workingDirectory
+    configuration.managedByPlugin = true
     configuration.modelId = modelId
+    recordGeneratedBaseline(settings, configuration, spec)
+}
+
+private fun recordGeneratedBaseline(
+    settings: RunnerAndConfigurationSettings,
+    configuration: DuneRunConfiguration,
+    spec: DuneRunConfigurationSpec,
+) {
+    configuration.lastGeneratedName = settings.name
+    configuration.lastGeneratedModelName = spec.name
+    configuration.lastGeneratedTarget = configuration.target
+    configuration.lastGeneratedWorkingDirectory = configuration.workingDirectory
 }
 
 internal fun modelId(project: Project, spec: DuneRunConfigurationSpec): String = buildString {

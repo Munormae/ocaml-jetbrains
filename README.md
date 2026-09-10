@@ -40,7 +40,7 @@ An OPAM switch and explicit executable paths can be configured under **Settings 
 
 Enable **Run dune build --watch for richer LSP diagnostics** for Dune projects when you want the plugin to keep Dune's RPC server and build information current. The managed process starts only for trusted projects containing `dune-project` or `dune-workspace` and stops with the project.
 
-For a Dune project, the plugin creates **Dune Build**, **Dune Exec**, and (when test stanzas exist) **Dune Test** configurations. Discovery uses `dune describe workspace` when available, falls back to parsing source stanzas, and refreshes after changes to `dune`, `dune-project`, or `dune-workspace`. You can also add or customize configurations under **Run | Edit Configurations**. Each configuration supports Dune arguments, targets or executable arguments, and a custom working directory. Commands use the OPAM switch and executable paths configured in the OCaml project settings.
+For a Dune project, the plugin creates **Dune Build**, **Dune Exec**, and (when test stanzas exist) **Dune Test** configurations. Discovery uses `dune describe workspace` when available, falls back to parsing source stanzas, and refreshes after changes to `dune`, `dune-project`, or `dune-workspace`. You can also add or customize configurations under **Run | Edit Configurations**. Editing a generated configuration detaches it from automatic model updates so the plugin will not overwrite or remove the customized entry. Each configuration supports Dune arguments, targets or executable arguments, and a custom working directory. Commands use the OPAM switch and executable paths configured in the OCaml project settings.
 
 ## Creating a project
 
@@ -69,7 +69,9 @@ Build and validate the plugin:
 
 The installable archive is written to `build/distributions/`.
 
-Use the **Run IDE with Plugin (Split Mode)** run configuration to launch the sandbox. It invokes the single `runIde` task, which owns both the backend and frontend lifecycle and avoids inconsistent split-mode sandbox plugin paths.
+Use the **Run IDE (Split Mode)** run configuration to launch the sandbox. It invokes the single `runIde` task, which owns both the backend and frontend lifecycle and avoids inconsistent split-mode sandbox plugin paths.
+
+Before publishing, complete the [release smoke checklist](docs/release-smoke-checklist.md), including the real split-mode toolchain RPC and asynchronous highlighting checks.
 
 ## Module layout
 

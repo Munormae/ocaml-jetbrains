@@ -10,16 +10,25 @@ class OCamlLexer : LexerBase() {
     private var tokenStart = 0
     private var tokenEnd = 0
     private var tokenType: IElementType? = null
+    private var tokenState = DEFAULT_STATE
+    private var nextState = DEFAULT_STATE
+    private var quotedStringMarker: String? = null
 
     override fun start(buffer: CharSequence, startOffset: Int, endOffset: Int, initialState: Int) {
         this.buffer = buffer
         bufferEnd = endOffset
         tokenStart = startOffset
         tokenEnd = startOffset
+        nextState = initialState
+        quotedStringMarker = if (isQuotedStringState(initialState)) {
+            recoverQuotedStringMarker(startOffset, initialState)
+        } else {
+            null
+        }
         locateToken()
     }
 
-    override fun getState(): Int = 0
+    override fun getState(): Int = tokenState
     override fun getTokenType(): IElementType? = tokenType
     override fun getTokenStart(): Int = tokenStart
     override fun getTokenEnd(): Int = tokenEnd
@@ -33,17 +42,35 @@ class OCamlLexer : LexerBase() {
     override fun getBufferEnd(): Int = bufferEnd
 
     private fun locateToken() {
+        tokenState = nextState
         if (tokenStart >= bufferEnd) {
             tokenType = null
             tokenEnd = bufferEnd
             return
         }
 
+        when {
+            tokenState == STRING_STATE || tokenState == ESCAPED_STRING_STATE -> {
+                scanString(openingQuote = false)
+                return
+            }
+
+            isQuotedStringState(tokenState) -> {
+                scanQuotedString(contentStart = tokenStart)
+                return
+            }
+
+            isCommentState(tokenState) -> {
+                scanNestedComment(openingDelimiter = false)
+                return
+            }
+        }
+
         val first = buffer[tokenStart]
         when {
             first.isWhitespace() -> scanWhitespace()
-            startsWith("(*") -> scanNestedComment()
-            first == '"' -> scanQuoted('"', OCamlTokenTypes.STRING)
+            startsWith("(*") -> scanNestedComment(openingDelimiter = true)
+            first == '"' -> scanString(openingQuote = true)
             first == '{' && scanQuotedStringExtension() -> Unit
             first == '\'' -> scanCharacterOrTypeVariable()
             first.isDigit() -> scanNumber()
@@ -60,53 +87,163 @@ class OCamlLexer : LexerBase() {
         tokenType = TokenType.WHITE_SPACE
     }
 
-    private fun scanNestedComment() {
-        var depth = 1
-        tokenEnd = tokenStart + 2
-        while (tokenEnd < bufferEnd && depth > 0) {
+    private fun scanNestedComment(openingDelimiter: Boolean) {
+        var depth = if (openingDelimiter) 1 else commentDepth(tokenState)
+        var mode = if (openingDelimiter) COMMENT_CODE_MODE else commentMode(tokenState)
+        tokenEnd = tokenStart + if (openingDelimiter) 2 else 0
+
+        while (tokenEnd < bufferEnd) {
+            if (mode == COMMENT_STRING_MODE || mode == COMMENT_ESCAPED_STRING_MODE) {
+                var escaped = mode == COMMENT_ESCAPED_STRING_MODE
+                val current = buffer[tokenEnd]
+                if (current == '\n' || current == '\r') {
+                    consumeLineBreak()
+                    nextState = commentState(
+                        depth,
+                        if (escaped) COMMENT_ESCAPED_STRING_MODE else COMMENT_STRING_MODE,
+                    )
+                    tokenType = OCamlTokenTypes.COMMENT
+                    return
+                }
+
+                tokenEnd++
+                if (current == '"' && !escaped) {
+                    mode = COMMENT_CODE_MODE
+                    continue
+                }
+                escaped = current == '\\' && !escaped
+                if (current != '\\') escaped = false
+                mode = if (escaped) COMMENT_ESCAPED_STRING_MODE else COMMENT_STRING_MODE
+                continue
+            }
+
             when {
                 startsWith("(*", tokenEnd) -> {
                     depth++
                     tokenEnd += 2
                 }
+
                 startsWith("*)", tokenEnd) -> {
                     depth--
                     tokenEnd += 2
+                    if (depth == 0) {
+                        nextState = DEFAULT_STATE
+                        tokenType = OCamlTokenTypes.COMMENT
+                        return
+                    }
                 }
+
+                buffer[tokenEnd] == '"' -> {
+                    mode = COMMENT_STRING_MODE
+                    tokenEnd++
+                }
+
+                buffer[tokenEnd] == '\'' -> {
+                    val characterEnd = findCharacterLiteralEnd(tokenEnd)
+                    tokenEnd = if (characterEnd >= 0) characterEnd + 1 else tokenEnd + 1
+                }
+
+                buffer[tokenEnd] == '\n' || buffer[tokenEnd] == '\r' -> {
+                    consumeLineBreak()
+                    nextState = commentState(depth, COMMENT_CODE_MODE)
+                    tokenType = OCamlTokenTypes.COMMENT
+                    return
+                }
+
                 else -> tokenEnd++
             }
         }
+
+        nextState = commentState(depth, mode)
         tokenType = OCamlTokenTypes.COMMENT
     }
 
-    private fun scanQuoted(quote: Char, type: IElementType) {
-        tokenEnd = tokenStart + 1
-        var escaped = false
+    private fun scanString(openingQuote: Boolean) {
+        tokenEnd = tokenStart + if (openingQuote) 1 else 0
+        var escaped = tokenState == ESCAPED_STRING_STATE
         while (tokenEnd < bufferEnd) {
-            val current = buffer[tokenEnd++]
-            if (current == quote && !escaped) break
+            val current = buffer[tokenEnd]
+            if (current == '\n' || current == '\r') {
+                consumeLineBreak()
+                nextState = if (escaped) ESCAPED_STRING_STATE else STRING_STATE
+                tokenType = OCamlTokenTypes.STRING
+                return
+            }
+
+            tokenEnd++
+            if (current == '"' && !escaped) {
+                nextState = DEFAULT_STATE
+                tokenType = OCamlTokenTypes.STRING
+                return
+            }
             escaped = current == '\\' && !escaped
             if (current != '\\') escaped = false
         }
-        tokenType = type
+
+        nextState = if (escaped) ESCAPED_STRING_STATE else STRING_STATE
+        tokenType = OCamlTokenTypes.STRING
     }
 
     private fun scanQuotedStringExtension(): Boolean {
-        var markerEnd = tokenStart + 1
-        while (markerEnd < bufferEnd && buffer[markerEnd].isIdentifierPart()) markerEnd++
-        if (markerEnd >= bufferEnd || buffer[markerEnd] != '|') return false
-
-        val marker = buffer.subSequence(tokenStart + 1, markerEnd).toString()
-        val terminator = "|$marker}"
-        val contentStart = markerEnd + 1
-        val terminatorStart = indexOf(terminator, contentStart)
-        tokenEnd = if (terminatorStart >= 0) terminatorStart + terminator.length else bufferEnd
-        tokenType = OCamlTokenTypes.STRING
+        val opening = quotedStringOpeningAt(tokenStart) ?: return false
+        quotedStringMarker = opening.marker
+        scanQuotedString(contentStart = opening.contentStart)
         return true
+    }
+
+    private fun scanQuotedString(contentStart: Int) {
+        tokenEnd = contentStart
+        val marker = quotedStringMarker
+        val continuationState = marker?.let(::quotedStringState) ?: tokenState
+        val terminator = marker?.let { "|$it}" }
+
+        while (tokenEnd < bufferEnd) {
+            if (terminator != null && startsWith(terminator, tokenEnd)) {
+                tokenEnd += terminator.length
+                quotedStringMarker = null
+                nextState = DEFAULT_STATE
+                tokenType = OCamlTokenTypes.STRING
+                return
+            }
+
+            val current = buffer[tokenEnd]
+            if (current == '\n' || current == '\r') {
+                consumeLineBreak()
+                nextState = continuationState
+                tokenType = OCamlTokenTypes.STRING
+                return
+            }
+            tokenEnd++
+        }
+
+        nextState = continuationState
+        tokenType = OCamlTokenTypes.STRING
+    }
+
+    private fun recoverQuotedStringMarker(startOffset: Int, state: Int): String? {
+        for (index in startOffset - 1 downTo 0) {
+            val opening = quotedStringOpeningAt(index) ?: continue
+            if (quotedStringState(opening.marker) != state) continue
+            val terminatorStart = indexOf("|${opening.marker}}", opening.contentStart)
+            if (terminatorStart < 0 || startOffset <= terminatorStart) return opening.marker
+        }
+        return null
+    }
+
+    private fun quotedStringOpeningAt(offset: Int): QuotedStringOpening? {
+        if (buffer.getOrNull(offset) != '{' || offset >= bufferEnd) return null
+        var markerEnd = offset + 1
+        while (markerEnd < bufferEnd && buffer[markerEnd].isIdentifierPart()) markerEnd++
+        if (markerEnd >= bufferEnd || buffer[markerEnd] != '|') return null
+        return QuotedStringOpening(
+            marker = buffer.subSequence(offset + 1, markerEnd).toString(),
+            contentStart = markerEnd + 1,
+        )
     }
 
     private fun indexOf(value: String, startOffset: Int): Int {
         val lastStart = bufferEnd - value.length
+        if (startOffset > lastStart) return -1
         for (index in startOffset..lastStart) {
             if (startsWith(value, index)) return index
         }
@@ -114,7 +251,7 @@ class OCamlLexer : LexerBase() {
     }
 
     private fun scanCharacterOrTypeVariable() {
-        val close = findCharacterLiteralEnd()
+        val close = findCharacterLiteralEnd(tokenStart)
         if (close >= 0) {
             tokenEnd = close + 1
             tokenType = OCamlTokenTypes.CHARACTER
@@ -126,11 +263,29 @@ class OCamlLexer : LexerBase() {
         tokenType = OCamlTokenTypes.TYPE_VARIABLE
     }
 
-    private fun findCharacterLiteralEnd(): Int {
-        var index = tokenStart + 1
+    private fun findCharacterLiteralEnd(startOffset: Int): Int {
+        var index = startOffset + 1
         if (index >= bufferEnd || buffer[index] == '\n' || buffer[index] == '\r') return -1
-        if (buffer[index] == '\\') index += 2 else index++
+        if (buffer[index] != '\\') {
+            index++
+        } else {
+            index++
+            if (index >= bufferEnd) return -1
+            index = when {
+                buffer[index].isDigit() -> consumeDigits(index, 3) { it.isDigit() }
+                buffer[index] == 'x' -> consumeDigits(index + 1, 2) { it.isDigit() || it.lowercaseChar() in 'a'..'f' }
+                buffer[index] == 'o' -> consumeDigits(index + 1, 3) { it in '0'..'7' }
+                else -> index + 1
+            }
+            if (index < 0) return -1
+        }
         return if (index < bufferEnd && buffer[index] == '\'') index else -1
+    }
+
+    private fun consumeDigits(startOffset: Int, count: Int, accepts: (Char) -> Boolean): Int {
+        val endOffset = startOffset + count
+        if (endOffset > bufferEnd) return -1
+        return if ((startOffset until endOffset).all { accepts(buffer[it]) }) endOffset else -1
     }
 
     private fun scanNumber() {
@@ -207,16 +362,64 @@ class OCamlLexer : LexerBase() {
         tokenType = OCamlTokenTypes.OPERATOR
     }
 
+    private fun consumeLineBreak() {
+        val first = buffer[tokenEnd++]
+        if (first == '\r' && tokenEnd < bufferEnd && buffer[tokenEnd] == '\n') tokenEnd++
+    }
+
     private fun startsWith(value: String, offset: Int = tokenStart): Boolean {
-        if (offset + value.length > bufferEnd) return false
+        if (offset < 0 || offset + value.length > bufferEnd) return false
         return value.indices.all { buffer[offset + it] == value[it] }
     }
 
-    private fun peek(delta: Int): Char? = buffer.getOrNull(tokenStart + delta)?.takeIf { tokenStart + delta < bufferEnd }
+    private fun peek(delta: Int): Char? =
+        buffer.getOrNull(tokenStart + delta)?.takeIf { tokenStart + delta < bufferEnd }
+
     private fun Char.isIdentifierStart(): Boolean = this == '_' || isLetter()
     private fun Char.isIdentifierPart(): Boolean = this == '_' || this == '\'' || isLetterOrDigit()
 
+    private data class QuotedStringOpening(
+        val marker: String,
+        val contentStart: Int,
+    )
+
     companion object {
+        const val DEFAULT_STATE = 0
+        const val STRING_STATE = 1
+        const val ESCAPED_STRING_STATE = 2
+        const val QUOTED_STRING_STATE = 0x10000000
+        const val COMMENT_STATE = 0x20000004
+
+        private const val STATE_TAG_MASK = 0x70000000
+        private const val STATE_PAYLOAD_MASK = 0x0fffffff
+        private const val QUOTED_STRING_TAG = QUOTED_STRING_STATE
+        private const val COMMENT_TAG = 0x20000000
+        private const val COMMENT_CODE_MODE = 0
+        private const val COMMENT_STRING_MODE = 1
+        private const val COMMENT_ESCAPED_STRING_MODE = 2
+        private const val COMMENT_MODE_MASK = 0x3
+        private const val COMMENT_DEPTH_SHIFT = 2
+        private const val MAX_COMMENT_DEPTH = STATE_PAYLOAD_MASK ushr COMMENT_DEPTH_SHIFT
+
+        private fun quotedStringState(marker: String): Int =
+            QUOTED_STRING_TAG or (marker.hashCode() and STATE_PAYLOAD_MASK)
+
+        private fun isQuotedStringState(state: Int): Boolean =
+            state and STATE_TAG_MASK == QUOTED_STRING_TAG
+
+        private fun commentState(depth: Int, mode: Int): Int =
+            COMMENT_TAG or
+                (depth.coerceIn(1, MAX_COMMENT_DEPTH) shl COMMENT_DEPTH_SHIFT) or
+                (mode and COMMENT_MODE_MASK)
+
+        private fun isCommentState(state: Int): Boolean =
+            state and STATE_TAG_MASK == COMMENT_TAG
+
+        private fun commentDepth(state: Int): Int =
+            ((state and STATE_PAYLOAD_MASK) ushr COMMENT_DEPTH_SHIFT).coerceAtLeast(1)
+
+        private fun commentMode(state: Int): Int = state and COMMENT_MODE_MASK
+
         private val KEYWORDS = setOf(
             "and", "as", "assert", "asr", "begin", "class", "constraint", "do", "done", "downto",
             "else", "end", "exception", "external", "false", "for", "fun", "function", "functor", "if",

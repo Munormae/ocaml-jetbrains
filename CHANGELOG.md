@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-09-10
+
 ### Added
 
 - Dune Build, Dune Exec, and Dune Test run configurations with OPAM toolchain support.
@@ -16,6 +18,8 @@
 - OPAM/PATH toolchain detection with event-driven, transient version and status feedback in OCaml settings.
 - Editable Dune language-version selection in the project wizard, with selected-switch version detection and an explicit opt-in to the installed version.
 - A default Dune 3.0 language requirement for standalone Dune and OPAM file templates.
+- A release smoke checklist for real split-mode RPC, editor lifecycle, Dune reconciliation, and packaging checks.
+- Separate stable and beta Marketplace publication channels for GitHub releases and prereleases.
 
 ### Fixed
 
@@ -31,3 +35,9 @@
 - Toolchain probe status is no longer persisted or synchronized as project settings; OPAM failures short-circuit dependent probes and independent checks run concurrently.
 - The project wizard probes Dune through the selected OPAM switch without automatically raising the generated project's compatibility requirement.
 - Dune discovery parsing and OCaml lexical highlighting have expanded regression and fixture coverage.
+- Obsolete concurrent Dune model refresh results can no longer overwrite a newer model.
+- Legacy generated Dune run configurations are adopted conservatively, while customized managed configurations detach from plugin ownership.
+- Untouched managed run configurations follow generated display-name changes without overwriting manual renames or arguments.
+- The OCaml fallback lexer preserves incremental state for multiline strings, quoted strings, and nested comments.
+- OCaml comments ignore delimiters inside string and character literals, and numeric character escapes are tokenized completely.
+- Blocking toolchain probes use the IntelliJ application executor instead of the Java common pool.

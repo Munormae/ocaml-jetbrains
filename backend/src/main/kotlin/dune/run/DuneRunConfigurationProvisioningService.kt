@@ -15,6 +15,7 @@ import java.nio.file.Path
 import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
 
 class DuneRunConfigurationProvisioningActivity : ProjectActivity {
     override suspend fun execute(project: Project) {
@@ -24,6 +25,7 @@ class DuneRunConfigurationProvisioningActivity : ProjectActivity {
 
 class DuneRunConfigurationProvisioningService(private val project: Project) : Disposable {
     private val started = AtomicBoolean()
+    private val refreshGeneration = LatestRefreshGeneration()
     private val schedulingLock = Any()
     private var scheduledRefresh: ScheduledFuture<*>? = null
 
@@ -44,21 +46,28 @@ class DuneRunConfigurationProvisioningService(private val project: Project) : Di
     fun requestRefresh(delayMs: Long = MODEL_REFRESH_DELAY_MS) {
         if (ApplicationManager.getApplication().isUnitTestMode) return
         synchronized(schedulingLock) {
+            val generation = refreshGeneration.next()
             scheduledRefresh?.cancel(false)
             scheduledRefresh = AppExecutorUtil.getAppScheduledExecutorService().schedule(
-                ::refreshNow,
+                { refreshNow(generation) },
                 delayMs,
                 TimeUnit.MILLISECONDS,
             )
         }
     }
 
-    private fun refreshNow() {
-        if (project.isDisposed || !TrustedProjects.isProjectTrusted(project)) return
+    private fun refreshNow(generation: Long) {
+        if (!refreshGeneration.isCurrent(generation) ||
+            project.isDisposed ||
+            !TrustedProjects.isProjectTrusted(project)
+        ) return
         val duneRoot = findDuneRoot(project.basePath)
         val specs = duneRoot?.let { discoverDuneRunConfigurations(project, it) }.orEmpty()
         ApplicationManager.getApplication().invokeLater {
-            if (!project.isDisposed && TrustedProjects.isProjectTrusted(project)) {
+            if (refreshGeneration.isCurrent(generation) &&
+                !project.isDisposed &&
+                TrustedProjects.isProjectTrusted(project)
+            ) {
                 provisionDuneRunConfigurations(project, specs)
             }
         }
@@ -66,6 +75,7 @@ class DuneRunConfigurationProvisioningService(private val project: Project) : Di
 
     override fun dispose() {
         synchronized(schedulingLock) {
+            refreshGeneration.invalidate()
             scheduledRefresh?.cancel(false)
             scheduledRefresh = null
         }
@@ -73,6 +83,18 @@ class DuneRunConfigurationProvisioningService(private val project: Project) : Di
 
     companion object {
         fun getInstance(project: Project): DuneRunConfigurationProvisioningService = project.service()
+    }
+}
+
+internal class LatestRefreshGeneration {
+    private val value = AtomicLong()
+
+    fun next(): Long = value.incrementAndGet()
+
+    fun isCurrent(generation: Long): Boolean = value.get() == generation
+
+    fun invalidate() {
+        value.incrementAndGet()
     }
 }
 

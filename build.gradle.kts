@@ -34,4 +34,11 @@ dependencies {
 intellijPlatform {
     splitMode = true
     pluginInstallationTarget = SplitModeAware.PluginInstallationTarget.BOTH
+    publishing {
+        channels.set(
+            providers.gradleProperty("pluginChannel")
+                .map { listOf(it) }
+                .orElse(listOf("default")),
+        )
+    }
 }

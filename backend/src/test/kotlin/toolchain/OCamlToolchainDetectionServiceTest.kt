@@ -1,5 +1,7 @@
 package dev.munormae.toolchain
 
+import java.util.Collections
+import java.util.concurrent.Executors
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -48,5 +50,29 @@ class OCamlToolchainDetectionServiceTest {
             listOf("exec", "--switch", "5.1.1", "--", "dune", "--version"),
             command.parametersList.list,
         )
+    }
+
+    @Test
+    fun `independent probes run on the supplied executor`() {
+        val executor = Executors.newFixedThreadPool(2) { runnable ->
+            Thread(runnable, "managed-toolchain-probe-test")
+        }
+        val threadNames = Collections.synchronizedList(mutableListOf<String>())
+
+        try {
+            detectToolchain(
+                ToolchainSettingsSnapshot(false, "", "", "", "", ""),
+                projectBasePath = null,
+                probeExecutor = executor,
+            ) { _, _, _ ->
+                threadNames += Thread.currentThread().name
+                ToolProbeResult("OK", isAvailable = true)
+            }
+        } finally {
+            executor.shutdownNow()
+        }
+
+        assertEquals(4, threadNames.size)
+        assertTrue(threadNames.all { it == "managed-toolchain-probe-test" })
     }
 }

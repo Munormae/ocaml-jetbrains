@@ -13,6 +13,7 @@ import java.io.File
 import java.nio.file.Files
 import java.nio.file.Path
 import java.util.concurrent.CompletableFuture
+import java.util.concurrent.Executor
 import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -109,6 +110,7 @@ internal data class ToolchainDetectionSnapshot(
 internal fun detectToolchain(
     settings: ToolchainSettingsSnapshot,
     projectBasePath: String?,
+    probeExecutor: Executor = AppExecutorUtil.getAppExecutorService(),
     probe: ToolProbe = ::probeTool,
 ): ToolchainDetectionSnapshot {
     val workingDirectory = projectBasePath
@@ -155,11 +157,11 @@ internal fun detectToolchain(
             val unavailable = ToolProbeResult("Unavailable because opam could not be started")
             return ToolchainDetectionSnapshot(opam, unavailable, unavailable, unavailable)
         }
-        val tools = runProbesInParallel(languageProbes)
+        val tools = runProbesInParallel(languageProbes, probeExecutor)
         return ToolchainDetectionSnapshot(opam, tools[0], tools[1], tools[2])
     }
 
-    val results = runProbesInParallel(listOf(opamProbe) + languageProbes)
+    val results = runProbesInParallel(listOf(opamProbe) + languageProbes, probeExecutor)
     return ToolchainDetectionSnapshot(results[0], results[1], results[2], results[3])
 }
 
@@ -209,8 +211,11 @@ private fun probeTool(
     }
 }
 
-private fun runProbesInParallel(probes: List<() -> ToolProbeResult>): List<ToolProbeResult> = probes
-    .map { probe -> CompletableFuture.supplyAsync(probe) }
+private fun runProbesInParallel(
+    probes: List<() -> ToolProbeResult>,
+    executor: Executor,
+): List<ToolProbeResult> = probes
+    .map { probe -> CompletableFuture.supplyAsync(probe, executor) }
     .map(CompletableFuture<ToolProbeResult>::join)
 
 private fun ToolchainDetectionSnapshot.toStatusSnapshot(): OCamlToolchainStatusSnapshot =
