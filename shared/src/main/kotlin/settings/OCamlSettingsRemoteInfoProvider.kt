@@ -9,5 +9,9 @@ class OCamlSettingsRemoteInfoProvider : RemoteSettingInfoProvider {
             RemoteSettingInfo.Direction.InitialFromBackend,
             false,
         ),
+        OCamlWorkspaceSettings.COMPONENT_NAME to RemoteSettingInfo(
+            RemoteSettingInfo.Direction.InitialFromBackend,
+            false,
+        ),
     )
 }

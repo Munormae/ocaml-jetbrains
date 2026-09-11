@@ -10,5 +10,10 @@
                 parentId="language"
                 displayName="OCaml"
                 instance="dev.munormae.settings.OCamlSettingsConfigurable"/>
+        <projectConfigurable
+                id="dune.settings"
+                parentId="build.tools"
+                displayName="Dune"
+                instance="dev.munormae.settings.DuneSettingsConfigurable"/>
     </extensions>
 </idea-plugin>

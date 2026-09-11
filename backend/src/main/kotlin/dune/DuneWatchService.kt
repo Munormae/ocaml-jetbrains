@@ -12,11 +12,14 @@ import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import com.intellij.util.io.BaseOutputReader
 import dev.munormae.settings.OCamlProjectSettings
+import dev.munormae.settings.OCamlWorkspaceSettings
+import dev.munormae.toolchain.OCamlToolchainDetectionService
 import java.nio.file.Path
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
 
 class DuneWatchService(private val project: Project) : Disposable {
-    private var runningWatch: RunningWatch? = null
+    private val runningWatch = AtomicReference<RunningWatch?>()
     private val pauseController = ReferenceCountedPauseController(
         onFirstAcquire = ::pauseWatch,
         onLastRelease = ::resumeWatch,
@@ -25,21 +28,26 @@ class DuneWatchService(private val project: Project) : Disposable {
     @Synchronized
     fun refresh() {
         val state = OCamlProjectSettings.getInstance(project).state
+        val workspace = OCamlWorkspaceSettings.getInstance(project).state
         val root = findDuneRoot(project.basePath)
-        if (!state.lspEnabled || !state.duneWatchEnabled || root == null || !TrustedProjects.isProjectTrusted(project)) {
+        if (!state.lspEnabled || !workspace.manageDuneWatch || root == null || !TrustedProjects.isProjectTrusted(project)) {
+            if (!pauseController.isPaused) stop()
+            return
+        }
+        if (OCamlToolchainDetectionService.getInstance(project).status.selectedEnvironment?.dune?.isAvailable != true) {
             if (!pauseController.isPaused) stop()
             return
         }
         if (pauseController.isPaused) return
 
-        val commandLine = createDuneWatchCommandLine(
-            root = root,
-            useOpam = state.useOpam,
-            opamExecutable = state.opamExecutable,
-            opamSwitch = state.opamSwitch,
-            duneExecutable = state.duneExecutable,
-        )
-        val current = runningWatch
+        val commandLine = try {
+            createDuneWatchCommandLine(project, root)
+        } catch (exception: ExecutionException) {
+            LOG.debug("Dune watch is waiting for a configured OCaml environment", exception)
+            if (!pauseController.isPaused) stop()
+            return
+        }
+        val current = runningWatch.get()
         if (
             current != null &&
             current.root == root &&
@@ -57,22 +65,9 @@ class DuneWatchService(private val project: Project) : Disposable {
 
     private fun pauseWatch() {
         val watch = synchronized(this) {
-            val current = runningWatch ?: return
-            runningWatch = null
-            current.stopRequested = true
-            current
+            runningWatch.getAndSet(null) ?: return
         }
-        val handler = watch.handler
-        if (!handler.isProcessTerminated && !handler.isProcessTerminating) {
-            handler.destroyProcess()
-        }
-        if (!handler.waitFor(WATCH_STOP_TIMEOUT_MS)) {
-            LOG.warn("Dune watch did not stop gracefully in ${watch.root}; killing it")
-            handler.forceKill()
-            if (!handler.waitFor(WATCH_FORCE_KILL_TIMEOUT_MS)) {
-                throw ExecutionException("Unable to stop Dune watch in ${watch.root}")
-            }
-        }
+        terminateWatch(watch)
     }
 
     private fun resumeWatch() {
@@ -84,12 +79,10 @@ class DuneWatchService(private val project: Project) : Disposable {
         try {
             val handler = DuneWatchProcessHandler(commandLine)
             val watch = RunningWatch(root, commandLine.commandLineString, handler)
-            runningWatch = watch
+            runningWatch.set(watch)
             handler.addProcessListener(object : ProcessListener {
                 override fun processTerminated(event: ProcessEvent) {
-                    synchronized(this@DuneWatchService) {
-                        if (runningWatch === watch) runningWatch = null
-                    }
+                    runningWatch.compareAndSet(watch, null)
                     if (!watch.stopRequested && event.exitCode != 0 && !project.isDisposed) {
                         LOG.warn("Dune watch stopped with exit code ${event.exitCode} in $root")
                     }
@@ -104,16 +97,30 @@ class DuneWatchService(private val project: Project) : Disposable {
 
     @Synchronized
     private fun stop() {
-        val watch = runningWatch ?: return
-        runningWatch = null
+        val watch = runningWatch.getAndSet(null) ?: return
+        terminateWatch(watch)
+    }
+
+    private fun terminateWatch(watch: RunningWatch) {
         watch.stopRequested = true
-        if (!watch.handler.isProcessTerminated && !watch.handler.isProcessTerminating) {
-            watch.handler.destroyProcess()
+        if (
+            !terminateDuneWatchProcess(
+                process = watch.handler,
+                gracefulTimeoutMillis = WATCH_STOP_TIMEOUT_MS,
+                forceKillTimeoutMillis = WATCH_FORCE_KILL_TIMEOUT_MS,
+                onGracefulTimeout = {
+                    LOG.warn("Dune watch did not stop gracefully in ${watch.root}; killing it")
+                },
+            )
+        ) {
+            throw ExecutionException("Unable to stop Dune watch in ${watch.root}")
         }
     }
 
     override fun dispose() {
-        stop()
+        runCatching(::stop).onFailure { exception ->
+            LOG.warn("Unable to terminate Dune watch while disposing the project", exception)
+        }
     }
 
     private data class RunningWatch(
@@ -194,10 +201,40 @@ internal fun createDuneWatchCommandLine(
     )
 }
 
-private class DuneWatchProcessHandler(commandLine: GeneralCommandLine) : OSProcessHandler(commandLine) {
-    override fun readerOptions(): BaseOutputReader.Options = BaseOutputReader.Options.forMostlySilentProcess()
+internal fun createDuneWatchCommandLine(project: Project, root: Path): GeneralCommandLine =
+    createDuneCommandLine(project, root, listOf("build", "--watch"))
 
-    fun forceKill() {
+internal interface DuneWatchProcessControl {
+    fun isTerminated(): Boolean
+    fun isTerminating(): Boolean
+    fun requestTermination()
+    fun waitFor(timeoutInMilliseconds: Long): Boolean
+    fun forceKill()
+}
+
+internal fun terminateDuneWatchProcess(
+    process: DuneWatchProcessControl,
+    gracefulTimeoutMillis: Long,
+    forceKillTimeoutMillis: Long,
+    onGracefulTimeout: () -> Unit = {},
+): Boolean {
+    if (process.isTerminated()) return true
+    if (!process.isTerminating()) process.requestTermination()
+    if (process.waitFor(gracefulTimeoutMillis)) return true
+    onGracefulTimeout()
+    process.forceKill()
+    return process.waitFor(forceKillTimeoutMillis)
+}
+
+private class DuneWatchProcessHandler(commandLine: GeneralCommandLine) :
+    OSProcessHandler(commandLine),
+    DuneWatchProcessControl {
+    override fun readerOptions(): BaseOutputReader.Options = BaseOutputReader.Options.forMostlySilentProcess()
+    override fun isTerminated(): Boolean = isProcessTerminated
+    override fun isTerminating(): Boolean = isProcessTerminating
+    override fun requestTermination() = destroyProcess()
+
+    override fun forceKill() {
         killProcessTree(process)
     }
 }

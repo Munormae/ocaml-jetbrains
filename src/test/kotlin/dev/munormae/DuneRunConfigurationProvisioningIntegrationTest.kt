@@ -186,6 +186,31 @@ class DuneRunConfigurationProvisioningIntegrationTest : BasePlatformTestCase() {
         assertEquals("--port 8080", configuration.programArguments)
     }
 
+    fun testAdvancedOverridesDetachManagedConfigurationsBeforeStaleRemoval() {
+        val specs = listOf(
+            DuneRunConfigurationSpec(DuneCommand.EXEC, "Dune Run custom-dune", "./custom-dune.exe"),
+            DuneRunConfigurationSpec(DuneCommand.EXEC, "Dune Run environment", "./environment.exe"),
+            DuneRunConfigurationSpec(DuneCommand.EXEC, "Dune Run isolated", "./isolated.exe"),
+        )
+        provisionDuneRunConfigurations(project, specs)
+        val configurations = RunManager.getInstance(project).allSettings
+            .mapNotNull { it.configuration as? DuneRunConfiguration }
+            .associateBy(DuneRunConfiguration::target)
+        configurations.getValue("./custom-dune.exe").customDuneExecutable = "custom-dune"
+        configurations.getValue("./environment.exe").environmentVariables["OCAMLRUNPARAM"] = "b"
+        configurations.getValue("./isolated.exe").passParentEnvironment = false
+
+        provisionDuneRunConfigurations(project, emptyList())
+
+        val remaining = RunManager.getInstance(project).allSettings
+            .mapNotNull { it.configuration as? DuneRunConfiguration }
+        assertEquals(3, remaining.size)
+        assertTrue(remaining.none(DuneRunConfiguration::managedByPlugin))
+        assertEquals("custom-dune", configurations.getValue("./custom-dune.exe").customDuneExecutable)
+        assertEquals("b", configurations.getValue("./environment.exe").environmentVariables["OCAMLRUNPARAM"])
+        assertFalse(configurations.getValue("./isolated.exe").passParentEnvironment)
+    }
+
     fun testManualRenameDetachesManagedConfigurationWithoutCreatingDuplicate() {
         val spec = DuneRunConfigurationSpec(
             DuneCommand.EXEC,

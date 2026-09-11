@@ -8,12 +8,18 @@ Use this checklist before publishing every plugin release. It supplements automa
 - Have a small Dune project with one executable and at least one test stanza.
 - For the first JetBrains Marketplace release, upload the signed plugin archive manually before enabling token-based Gradle publication for later versions.
 
+## Automated Split Mode baseline
+
+- [ ] Set `LICENSE_KEY` to the Base64-encoded contents of an IntelliJ IDEA Ultimate offline activation file accepted by the Starter test instance.
+- [ ] Run `./gradlew testIdeUiSplitMode` (or `.\gradlew.bat testIdeUiSplitMode` on Windows).
+- [ ] Confirm the test opens OCaml Settings, triggers a refresh, receives non-default toolchain status through Fleet RPC, and observes that status in the frontend UI.
+
 ## Split-mode RPC and editor lifecycle
 
 - [ ] Launch **Run IDE (Split Mode)** from the repository run configurations.
 - [ ] Open the Dune project and mark it trusted.
-- [ ] Open **Settings | Languages & Frameworks | OCaml** and trigger a toolchain refresh.
-- [ ] Confirm OPAM, `ocamllsp`, Dune, and `ocamlformat` change from **Not checked** to their detected versions. This exercises the frontend refresh call, backend project resolution and probing, Fleet RPC serialization, backend `StateFlow`, and frontend delivery.
+- [ ] Open **Settings | Languages & Frameworks | OCaml** and trigger a toolchain refresh with the real release toolchain.
+- [ ] Confirm OPAM, `ocamllsp`, Dune, and `ocamlformat` show the expected installed versions; the automated baseline covers the RPC path, while this check validates the release environment itself.
 - [ ] Set the OPAM executable to a deliberately missing path and apply the settings.
 - [ ] Confirm the OPAM failure reaches the settings page and the three OPAM-dependent tools report that OPAM could not be started.
 - [ ] Restore the valid OPAM executable and selected switch, apply the settings, and confirm successful statuses return without reopening Settings.

@@ -8,6 +8,7 @@ import com.intellij.openapi.components.service
 import com.intellij.openapi.project.Project
 import com.intellij.platform.project.projectId
 import com.intellij.util.messages.Topic
+import dev.munormae.OCamlBundle
 import fleet.rpc.client.durable
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CancellationException
@@ -45,9 +46,34 @@ class OCamlToolchainStatusService(
             } catch (exception: CancellationException) {
                 throw exception
             } catch (_: Exception) {
-                val unavailable = "Unavailable: backend connection failed"
-                update(OCamlToolchainStatusSnapshot(unavailable, unavailable, unavailable, unavailable))
+                val unavailable = OCamlBundle.message("status.backend.failed")
+                update(
+                    OCamlToolchainStatusSnapshot(
+                        unavailable,
+                        unavailable,
+                        unavailable,
+                        unavailable,
+                        detectionState = OCamlEnvironmentDetectionState.FAILED,
+                        problem = unavailable,
+                    ),
+                )
             }
+        }
+    }
+
+    fun selectEnvironment(environmentId: String, environmentPrefix: String = "") {
+        coroutineScope.launch {
+            OCamlToolchainRpcApi.getInstance().selectEnvironment(
+                project.projectId(),
+                environmentId,
+                environmentPrefix,
+            )
+        }
+    }
+
+    fun installRequiredTools(environmentId: String) {
+        coroutineScope.launch {
+            OCamlToolchainRpcApi.getInstance().installRequiredTools(project.projectId(), environmentId)
         }
     }
 

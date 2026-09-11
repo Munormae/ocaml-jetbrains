@@ -1,10 +1,41 @@
 package dev.munormae.dune.run
 
+import dev.munormae.dune.model.discoverDuneSourceMetadata
+import dev.munormae.dune.model.duneExecutableModelName
+import java.nio.file.Files
 import java.nio.file.Path
 import org.junit.Assert.assertEquals
+import org.junit.Rule
 import org.junit.Test
+import org.junit.rules.TemporaryFolder
 
 class DuneWorkspaceModelTest {
+    @get:Rule
+    val temporaryFolder = TemporaryFolder()
+
+    @Test
+    fun `executable model names do not depend on localized run configuration text`() {
+        assertEquals("published-name", duneExecutableModelName("./bin/main.exe", "published-name"))
+        assertEquals("main", duneExecutableModelName("./bin/main.exe", ""))
+    }
+
+    @Test
+    fun `source model exposes libraries tests packages and source roots`() {
+        val root = temporaryFolder.newFolder("camel").toPath()
+        Files.writeString(root.resolve("dune-project"), "(lang dune 3.0)\n(package (name camel))\n")
+        Files.createDirectories(root.resolve("lib"))
+        Files.writeString(root.resolve("lib/dune"), "(library (name camel_core) (public_name camel.core))\n")
+        Files.createDirectories(root.resolve("test"))
+        Files.writeString(root.resolve("test/dune"), "(tests (names parser lexer))\n")
+
+        val metadata = discoverDuneSourceMetadata(root)
+
+        assertEquals(listOf("camel_core"), metadata.libraries.map { it.name })
+        assertEquals(listOf("parser", "lexer"), metadata.tests.map { it.name })
+        assertEquals(listOf("camel"), metadata.packages)
+        assertEquals(listOf(root.resolve("lib"), root.resolve("test")), metadata.sourceRoots)
+    }
+
     @Test
     fun `current Dune describe fixture yields a local executable target`() {
         val output = requireNotNull(

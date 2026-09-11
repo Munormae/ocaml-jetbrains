@@ -16,7 +16,15 @@ data class OCamlToolchainStatusSnapshot(
     val ocamllsp: String,
     val dune: String,
     val ocamlformat: String,
+    val detectionState: OCamlEnvironmentDetectionState = OCamlEnvironmentDetectionState.NOT_CHECKED,
+    val environments: List<OCamlEnvironmentDescriptor> = emptyList(),
+    val selectedEnvironmentId: String = "",
+    val duneProject: DuneProjectSummary = DuneProjectSummary(),
+    val problem: String = "",
 ) {
+    val selectedEnvironment: OCamlEnvironmentDescriptor?
+        get() = environments.firstOrNull { it.id == selectedEnvironmentId }
+
     companion object {
         val NOT_CHECKED = OCamlToolchainStatusSnapshot(
             opam = "Not checked",
@@ -29,12 +37,12 @@ data class OCamlToolchainStatusSnapshot(
 
 @Serializable
 data class OCamlToolchainSettingsDto(
-    val useOpam: Boolean,
-    val opamExecutable: String,
-    val opamSwitch: String,
-    val lspExecutable: String,
-    val duneExecutable: String,
-    val ocamlformatExecutable: String,
+    val environmentId: String = "",
+    val environmentPrefixOverride: String = "",
+    val opamExecutableOverride: String = "",
+    val lspExecutableOverride: String = "",
+    val duneExecutableOverride: String = "",
+    val ocamlformatExecutableOverride: String = "",
 )
 
 @Rpc
@@ -42,6 +50,10 @@ interface OCamlToolchainRpcApi : RemoteApi<Unit> {
     suspend fun getStatusFlow(projectId: ProjectId): Flow<OCamlToolchainStatusSnapshot>
 
     suspend fun refreshStatus(projectId: ProjectId, settings: OCamlToolchainSettingsDto)
+
+    suspend fun selectEnvironment(projectId: ProjectId, environmentId: String, environmentPrefix: String)
+
+    suspend fun installRequiredTools(projectId: ProjectId, environmentId: String)
 
     companion object {
         suspend fun getInstance(): OCamlToolchainRpcApi =

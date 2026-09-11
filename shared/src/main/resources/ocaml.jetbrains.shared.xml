@@ -33,7 +33,9 @@
         <colorSettingsPage implementation="dev.munormae.lang.highlighting.DuneColorSettingsPage"/>
 
         <projectService serviceImplementation="dev.munormae.settings.OCamlProjectSettings"/>
+        <projectService serviceImplementation="dev.munormae.settings.OCamlWorkspaceSettings"/>
         <rdct.remoteSettingProvider implementation="dev.munormae.settings.OCamlSettingsRemoteInfoProvider"/>
         <projectSettings service="dev.munormae.settings.OCamlProjectSettings"/>
+        <projectSettings service="dev.munormae.settings.OCamlWorkspaceSettings"/>
     </extensions>
 </idea-plugin>

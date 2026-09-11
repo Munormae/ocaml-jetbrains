@@ -4,6 +4,33 @@
 
 ## [Unreleased]
 
+### Added
+
+- Windows CI coverage for the Gradle `check` task.
+- A JetBrains Starter/Driver Split Mode smoke test covering the settings UI, Fleet RPC toolchain refresh, backend detection state, and frontend status rendering.
+- First-class OCaml environments with local OPAM, named-switch, selected-prefix, and PATH discovery; compiler/tool health; project SDK binding; and explicit install/create repair actions.
+- Persistent OCaml modules and content/source/test/excluded roots through Workspace Model for generated and existing projects.
+- A canonical reactive Dune project model plus linked External System tasks for build, test, clean, and discovered executables.
+- Native Language Services presentation, missing-environment/tool editor banners, `.ml`/`.mli` related-file navigation, Dune gutter run actions, compiler hyperlinks, and an interactive `dune utop` console.
+- A documented Earlybird/DAP compatibility decision and production gates.
+
+### Changed
+
+- GitHub Actions now use immutable full commit SHAs, and release drafts are updated only for the version declared in `gradle.properties`.
+- Marketplace publication now targets the dedicated `marketplace` GitHub Environment, where secrets and approval rules can be scoped.
+- Durable audit documents now live under `docs/audits` instead of tool-specific directories.
+- OCaml Settings now use Kotlin UI DSL 2, an environment selector, actionable health, native executable pickers, and collapsed advanced overrides; Dune build settings have their own Build Tools page.
+- The New Project Wizard now uses PropertyGraph state, user-facing project types, environment validation/repair, visible Dune package naming, native progress, and a staged project bootstrap.
+- Dune Run Configurations now use a fragmented editor with model-backed executable selection, program arguments, and a browsable working directory, with Dune arguments, environment, and executable overrides under Modify options.
+- Machine-specific toolchain selection and executable overrides now live in workspace-local state instead of shareable project settings.
+
+### Fixed
+
+- OCaml raw identifiers now require the `\#` prefix, while object method `#` remains a separate token.
+- OCaml PPX quoted-string shorthand, exact identifier letter ranges, octal character bounds, and line directives are recognized by the fallback lexer.
+- Dune end-of-line strings no longer corrupt syntax highlighting or fallback run-configuration discovery.
+- Replacing, pausing, or disposing Dune Watch now waits for bounded graceful termination and falls back to force kill before continuing.
+
 ## [0.1.0] - 2026-09-10
 
 ### Added

@@ -45,6 +45,15 @@ class PluginDescriptorSmokeTest {
             "The module creation action must declare its IntelliJ language implementation dependency",
             "intellij.platform.lang.impl" in moduleNames,
         )
+        assertTrue(
+            "Dune Run Configurations and REPL must declare the IntelliJ execution module",
+            "intellij.platform.execution" in moduleNames,
+        )
+        assertTrue(
+            "The Dune build-system integration must declare the External System API",
+            "intellij.platform.externalSystem" in moduleNames &&
+                "intellij.platform.externalSystem.impl" in moduleNames,
+        )
         assertFalse(
             "The legacy LSP compatibility alias is not a resolvable content module",
             "com.intellij.modules.lsp" in moduleNames,
@@ -110,6 +119,27 @@ class PluginDescriptorSmokeTest {
                     "dev.munormae.toolchain.OCamlToolchainDetectionService"
             },
         )
+        assertTrue(
+            "The backend module must register the OCaml project model",
+            (0 until services.length).any {
+                services.item(it).attributes.getNamedItem("serviceImplementation").nodeValue ==
+                    "dev.munormae.project.OCamlProjectModelService"
+            },
+        )
+        assertTrue(
+            "The backend module must register the canonical Dune model",
+            (0 until services.length).any {
+                services.item(it).attributes.getNamedItem("serviceImplementation").nodeValue ==
+                    "dev.munormae.dune.model.DuneProjectModelService"
+            },
+        )
+
+        assertEquals(1, document.getElementsByTagName("sdkType").length)
+        assertEquals(1, document.getElementsByTagName("projectSdkSetupValidator").length)
+        assertEquals(1, document.getElementsByTagName("editorNotificationProvider").length)
+        assertEquals(1, document.getElementsByTagName("externalSystemManager").length)
+        assertEquals(1, document.getElementsByTagName("gotoRelatedProvider").length)
+        assertEquals(1, document.getElementsByTagName("codeInsight.lineMarkerProvider").length)
 
         val configurationTypes = document.getElementsByTagName("configurationType")
         assertEquals("Exactly one Dune run configuration type must be registered", 1, configurationTypes.length)
@@ -134,5 +164,26 @@ class PluginDescriptorSmokeTest {
                 actions.item(it).attributes.getNamedItem("id").nodeValue == "OCaml.NewModule"
             },
         )
+        assertTrue(
+            "The backend module must register the Dune UTop action",
+            (0 until actions.length).any {
+                actions.item(it).attributes.getNamedItem("id").nodeValue == "OCaml.OpenRepl"
+            },
+        )
+    }
+
+    @Test
+    fun `frontend descriptor exposes OCaml and Dune settings surfaces`() {
+        val descriptor = requireNotNull(
+            javaClass.classLoader.getResourceAsStream("ocaml.jetbrains.frontend.xml"),
+        ) { "The packaged frontend module descriptor is missing" }
+        val document = descriptor.use {
+            DocumentBuilderFactory.newInstance().newDocumentBuilder().parse(it)
+        }
+        val configurables = document.getElementsByTagName("projectConfigurable")
+        val ids = (0 until configurables.length).map {
+            configurables.item(it).attributes.getNamedItem("id").nodeValue
+        }
+        assertEquals(setOf("ocaml.settings", "dune.settings"), ids.toSet())
     }
 }

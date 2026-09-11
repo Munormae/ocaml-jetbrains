@@ -6,11 +6,12 @@ import com.intellij.execution.configurations.RunConfiguration
 import com.intellij.openapi.project.DumbAware
 import com.intellij.openapi.project.Project
 import dev.munormae.icons.OCamlIcons
+import dev.munormae.OCamlBundle
 
 class DuneRunConfigurationType : ConfigurationTypeBase(
     ID,
-    "Dune",
-    "Build, run, and test OCaml projects with Dune",
+    OCamlBundle.message("run.type.name"),
+    OCamlBundle.message("run.type.description"),
     OCamlIcons.Dune,
 ), DumbAware {
     init {
@@ -48,26 +49,26 @@ enum class DuneCommand(
 ) {
     BUILD(
         cliName = "build",
-        displayName = "Dune Build",
-        defaultConfigurationName = "Dune Build",
+        displayName = OCamlBundle.message("run.command.build"),
+        defaultConfigurationName = OCamlBundle.message("run.command.build"),
         idSuffix = "Build",
-        targetLabel = "Targets:",
-        targetComment = "Optional. Space-separated Dune targets; empty builds the default alias.",
+        targetLabel = OCamlBundle.message("run.targets.label"),
+        targetComment = OCamlBundle.message("run.targets.comment"),
     ),
     EXEC(
         cliName = "exec",
-        displayName = "Dune Exec",
-        defaultConfigurationName = "Dune Exec",
+        displayName = OCamlBundle.message("run.command.exec"),
+        defaultConfigurationName = OCamlBundle.message("run.command.exec"),
         idSuffix = "Exec",
-        targetLabel = "Executable:",
-        targetComment = "Required. For example: ./bin/main.exe or my-package.",
+        targetLabel = OCamlBundle.message("run.executable.label"),
+        targetComment = OCamlBundle.message("run.executable.comment"),
     ),
     TEST(
         cliName = "test",
-        displayName = "Dune Test",
-        defaultConfigurationName = "Dune Test",
+        displayName = OCamlBundle.message("run.command.test"),
+        defaultConfigurationName = OCamlBundle.message("run.command.test"),
         idSuffix = "Test",
-        targetLabel = "Tests:",
-        targetComment = "Optional. Space-separated test targets; empty uses Dune's default test scope.",
+        targetLabel = OCamlBundle.message("run.tests.label"),
+        targetComment = OCamlBundle.message("run.tests.comment"),
     ),
 }

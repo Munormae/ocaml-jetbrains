@@ -86,4 +86,79 @@ class DuneWatchServiceTest {
         second.close()
         assertEquals(1, resumeCalls)
     }
+
+    @Test
+    fun `watch termination waits for graceful shutdown before returning`() {
+        val process = FakeDuneWatchProcess(waitResults = listOf(true))
+
+        val terminated = terminateDuneWatchProcess(
+            process = process,
+            gracefulTimeoutMillis = 5,
+            forceKillTimeoutMillis = 2,
+        )
+
+        assertTrue(terminated)
+        assertEquals(1, process.destroyCalls)
+        assertEquals(0, process.forceKillCalls)
+        assertEquals(listOf(5L), process.waitTimeouts)
+    }
+
+    @Test
+    fun `watch termination force kills after the graceful timeout`() {
+        val process = FakeDuneWatchProcess(waitResults = listOf(false, true))
+        var gracefulTimeouts = 0
+
+        val terminated = terminateDuneWatchProcess(
+            process = process,
+            gracefulTimeoutMillis = 5,
+            forceKillTimeoutMillis = 2,
+            onGracefulTimeout = { gracefulTimeouts++ },
+        )
+
+        assertTrue(terminated)
+        assertEquals(1, gracefulTimeouts)
+        assertEquals(1, process.destroyCalls)
+        assertEquals(1, process.forceKillCalls)
+        assertEquals(listOf(5L, 2L), process.waitTimeouts)
+    }
+
+    @Test
+    fun `watch termination reports a process that survives force kill`() {
+        val process = FakeDuneWatchProcess(waitResults = listOf(false, false))
+
+        assertFalse(
+            terminateDuneWatchProcess(
+                process = process,
+                gracefulTimeoutMillis = 5,
+                forceKillTimeoutMillis = 2,
+            ),
+        )
+    }
+
+    private class FakeDuneWatchProcess(waitResults: List<Boolean>) : DuneWatchProcessControl {
+        private val waitResults = waitResults.iterator()
+
+        var destroyCalls = 0
+            private set
+        var forceKillCalls = 0
+            private set
+        val waitTimeouts = mutableListOf<Long>()
+
+        override fun isTerminated(): Boolean = false
+
+        override fun isTerminating(): Boolean = false
+
+        override fun requestTermination() {
+            destroyCalls++
+        }
+
+        override fun waitFor(timeoutInMilliseconds: Long): Boolean {
+            waitTimeouts += timeoutInMilliseconds
+            return waitResults.next()
+        }
+
+        override fun forceKill() {
+            forceKillCalls++
+        }
+    }
 }

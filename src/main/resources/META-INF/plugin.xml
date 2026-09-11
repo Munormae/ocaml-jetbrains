@@ -7,6 +7,8 @@
      Guidelines: https://plugins.jetbrains.com/docs/marketplace/best-practices-for-listing.html#plugin-name -->
     <name>OCaml</name>
 
+    <resource-bundle>messages.OCamlBundle</resource-bundle>
+
     <!-- A displayed Vendor name or Organization ID displayed on the Plugins Page. -->
     <vendor url="https://github.com/Munormae">Mu Normae</vendor>
 

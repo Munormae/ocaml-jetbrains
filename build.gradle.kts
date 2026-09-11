@@ -9,6 +9,17 @@ plugins {
     id("org.jetbrains.kotlin.plugin.serialization") apply false
 }
 
+sourceSets {
+    create("integrationTest") {
+        compileClasspath += sourceSets.main.get().output
+        runtimeClasspath += sourceSets.main.get().output
+    }
+}
+
+val integrationTestImplementation by configurations.getting {
+    extendsFrom(configurations.testImplementation.get())
+}
+
 subprojects {
     apply(plugin = "org.jetbrains.intellij.platform.module")
     apply(plugin = "rpc")
@@ -26,9 +37,13 @@ dependencies {
         pluginModule(implementation(project(":backend")))
 
         testFramework(TestFrameworkType.Platform)
+        testFramework(TestFrameworkType.Starter, configurationName = "integrationTestImplementation")
     }
 
     testImplementation("junit:junit:4.13.2")
+    integrationTestImplementation("org.junit.jupiter:junit-jupiter:5.7.1")
+    integrationTestImplementation("org.kodein.di:kodein-di-jvm:7.20.2")
+    integrationTestImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-core-jvm:1.10.1")
 }
 
 intellijPlatform {
@@ -40,5 +55,19 @@ intellijPlatform {
                 .map { listOf(it) }
                 .orElse(listOf("default")),
         )
+    }
+}
+
+val testIdeUiSplitMode by intellijPlatformTesting.testIdeUi.registering {
+    splitMode = true
+    pluginInstallationTarget = SplitModeAware.PluginInstallationTarget.BOTH
+    task {
+        val integrationTestSourceSet = sourceSets.getByName("integrationTest")
+        testClassesDirs = integrationTestSourceSet.output.classesDirs
+        classpath = integrationTestSourceSet.runtimeClasspath
+        dependsOn(tasks.buildPlugin)
+        systemProperty("path.to.build.plugin", tasks.buildPlugin.flatMap { it.archiveFile })
+        maxParallelForks = 1
+        useJUnitPlatform()
     }
 }

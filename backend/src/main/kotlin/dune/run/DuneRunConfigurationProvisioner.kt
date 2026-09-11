@@ -6,11 +6,11 @@ import com.intellij.execution.configurations.ConfigurationTypeUtil
 import com.intellij.execution.process.CapturingProcessHandler
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
+import dev.munormae.OCamlBundle
 import dev.munormae.dune.DuneWatchService
 import dev.munormae.dune.SList
 import dev.munormae.dune.createDuneCommandLine
 import dev.munormae.dune.parseSExpressions
-import dev.munormae.settings.OCamlProjectSettings
 import java.nio.file.Files
 import java.nio.file.FileVisitResult
 import java.nio.file.Path
@@ -176,7 +176,10 @@ private fun isCustomized(
         configuration.target != configuration.lastGeneratedTarget ||
         configuration.workingDirectory != configuration.lastGeneratedWorkingDirectory ||
         configuration.duneArguments.isNotBlank() ||
-        configuration.programArguments.isNotBlank()
+        configuration.programArguments.isNotBlank() ||
+        configuration.customDuneExecutable.isNotBlank() ||
+        configuration.environmentVariables.isNotEmpty() ||
+        !configuration.passParentEnvironment
 
 private fun matchesUntouchedGeneratedConfiguration(
     project: Project,
@@ -190,7 +193,10 @@ private fun matchesUntouchedGeneratedConfiguration(
         canonicalWorkingDirectory(project, configuration.workingDirectory) ==
         canonicalWorkingDirectory(project, spec.workingDirectory) &&
         configuration.duneArguments.isBlank() &&
-        configuration.programArguments.isBlank()
+        configuration.programArguments.isBlank() &&
+        configuration.customDuneExecutable.isBlank() &&
+        configuration.environmentVariables.isEmpty() &&
+        configuration.passParentEnvironment
 
 private fun isPreOwnershipGeneratedConfiguration(
     project: Project,
@@ -208,6 +214,9 @@ private fun isPreOwnershipGeneratedConfiguration(
         configuration.command == spec.command &&
         configuration.duneArguments.isBlank() &&
         configuration.programArguments.isBlank() &&
+        configuration.customDuneExecutable.isBlank() &&
+        configuration.environmentVariables.isEmpty() &&
+        configuration.passParentEnvironment &&
         matchesGeneratedTarget &&
         canonicalWorkingDirectory(project, configuration.workingDirectory) ==
         canonicalWorkingDirectory(project, spec.workingDirectory)
@@ -288,7 +297,7 @@ internal fun discoverDuneRunConfigurations(duneRoot: Path): List<DuneRunConfigur
     val specs = mutableListOf(
         DuneRunConfigurationSpec(
             command = DuneCommand.BUILD,
-            name = "Dune Build",
+            name = OCamlBundle.message("run.command.build"),
             workingDirectory = normalizedRoot.toString(),
         ),
     )
@@ -328,7 +337,7 @@ internal fun discoverDuneRunConfigurations(duneRoot: Path): List<DuneRunConfigur
     if (hasTests) {
         specs += DuneRunConfigurationSpec(
             command = DuneCommand.TEST,
-            name = "Dune Test",
+            name = OCamlBundle.message("run.command.test"),
             workingDirectory = normalizedRoot.toString(),
         )
     }
@@ -355,17 +364,13 @@ internal fun discoverDuneRunConfigurations(
 }
 
 private fun describeDuneWorkspace(project: Project, duneRoot: Path): List<DuneRunConfigurationSpec>? {
-    val state = OCamlProjectSettings.getInstance(project).state
-    val commandLine = createDuneCommandLine(
-        workingDirectory = duneRoot,
-        useOpam = state.useOpam,
-        opamExecutable = state.opamExecutable,
-        opamSwitch = state.opamSwitch,
-        duneExecutable = state.duneExecutable,
-        arguments = listOf("describe", "workspace", "--format=sexp", "--no-print-directory"),
-    )
     val pauseLease = DuneWatchService.getInstance(project).acquirePause()
     return try {
+        val commandLine = createDuneCommandLine(
+            project = project,
+            workingDirectory = duneRoot,
+            arguments = listOf("describe", "workspace", "--format=sexp", "--no-print-directory"),
+        )
         val output = CapturingProcessHandler(commandLine).runProcess(DUNE_DESCRIBE_TIMEOUT_MS)
         if (output.isTimeout || output.exitCode != 0) {
             LOG.debug("Dune describe unavailable; using source model: ${output.stderr}")
@@ -384,7 +389,7 @@ private fun describeDuneWorkspace(project: Project, duneRoot: Path): List<DuneRu
 private fun execSpec(executable: DuneExecutableTarget, root: Path): DuneRunConfigurationSpec =
     DuneRunConfigurationSpec(
         command = DuneCommand.EXEC,
-        name = "Dune Run ${executable.displayName}",
+        name = OCamlBundle.message("run.configuration.exec", executable.displayName),
         target = executable.localTarget,
         workingDirectory = root.toString(),
         legacyTarget = executable.publicName.orEmpty(),
