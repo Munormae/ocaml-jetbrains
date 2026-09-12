@@ -1,84 +1,30 @@
 package dev.munormae.dune.run
 
-import com.intellij.ide.trustedProjects.TrustedProjects
 import com.intellij.openapi.Disposable
-import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.components.service
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.startup.ProjectActivity
-import com.intellij.openapi.vfs.VirtualFileManager
-import com.intellij.openapi.vfs.newvfs.BulkFileListenerBackgroundable
-import com.intellij.openapi.vfs.newvfs.events.VFileEvent
-import com.intellij.util.concurrency.AppExecutorUtil
-import dev.munormae.dune.findDuneRoot
+import dev.munormae.dune.model.DuneProjectModelService
 import java.nio.file.Path
-import java.util.concurrent.ScheduledFuture
-import java.util.concurrent.TimeUnit
-import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 
 class DuneRunConfigurationProvisioningActivity : ProjectActivity {
     override suspend fun execute(project: Project) {
-        DuneRunConfigurationProvisioningService.getInstance(project).start()
+        DuneProjectModelService.getInstance(project).start()
     }
 }
 
 class DuneRunConfigurationProvisioningService(private val project: Project) : Disposable {
-    private val started = AtomicBoolean()
-    private val refreshGeneration = LatestRefreshGeneration()
-    private val schedulingLock = Any()
-    private var scheduledRefresh: ScheduledFuture<*>? = null
-
     fun start() {
-        if (ApplicationManager.getApplication().isUnitTestMode) return
-        if (!started.compareAndSet(false, true)) return
-        project.messageBus.connect(this).subscribe(
-            VirtualFileManager.VFS_CHANGES_BG,
-            object : BulkFileListenerBackgroundable {
-                override fun after(events: List<VFileEvent>) {
-                    if (events.any { isDuneModelPath(project.basePath, it.path) }) requestRefresh()
-                }
-            },
-        )
-        requestRefresh(delayMs = 0)
+        DuneProjectModelService.getInstance(project).start()
     }
 
     fun requestRefresh(delayMs: Long = MODEL_REFRESH_DELAY_MS) {
-        if (ApplicationManager.getApplication().isUnitTestMode) return
-        synchronized(schedulingLock) {
-            val generation = refreshGeneration.next()
-            scheduledRefresh?.cancel(false)
-            scheduledRefresh = AppExecutorUtil.getAppScheduledExecutorService().schedule(
-                { refreshNow(generation) },
-                delayMs,
-                TimeUnit.MILLISECONDS,
-            )
-        }
-    }
-
-    private fun refreshNow(generation: Long) {
-        if (!refreshGeneration.isCurrent(generation) ||
-            project.isDisposed ||
-            !TrustedProjects.isProjectTrusted(project)
-        ) return
-        val duneRoot = findDuneRoot(project.basePath)
-        val specs = duneRoot?.let { discoverDuneRunConfigurations(project, it) }.orEmpty()
-        ApplicationManager.getApplication().invokeLater {
-            if (refreshGeneration.isCurrent(generation) &&
-                !project.isDisposed &&
-                TrustedProjects.isProjectTrusted(project)
-            ) {
-                provisionDuneRunConfigurations(project, specs)
-            }
-        }
+        DuneProjectModelService.getInstance(project).requestRefresh(delayMs)
     }
 
     override fun dispose() {
-        synchronized(schedulingLock) {
-            refreshGeneration.invalidate()
-            scheduledRefresh?.cancel(false)
-            scheduledRefresh = null
-        }
+        Unit
     }
 
     companion object {

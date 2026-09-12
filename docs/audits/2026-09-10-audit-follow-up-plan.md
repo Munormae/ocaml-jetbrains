@@ -1,4 +1,4 @@
-# Audit Follow-up Implementation Plan
+# September 2026 Audit Follow-up Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use `superpowers:executing-plans` to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -8,7 +8,7 @@
 
 **Tech Stack:** Kotlin 2.4, IntelliJ Platform 2026.2 APIs, JUnit 4, Gradle Kotlin DSL, GitHub Actions.
 
-**Spec:** `docs/superpowers/specs/2026-09-10-audit-follow-up-design.md`
+**Spec:** `docs/audits/2026-09-10-audit-follow-up-design.md`
 
 ## Global Constraints
 

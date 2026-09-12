@@ -4,6 +4,8 @@
         <module name="intellij.platform.kernel.backend"/>
         <module name="intellij.platform.ide.impl"/>
         <module name="intellij.platform.lang.impl"/>
+        <module name="intellij.platform.externalSystem"/>
+        <module name="intellij.platform.externalSystem.impl"/>
         <module name="ocaml.jetbrains.shared"/>
 
         <plugin id="com.intellij.modules.ultimate"/>
@@ -12,12 +14,24 @@
 
     <extensions defaultExtensionNs="com.intellij">
         <configurationType implementation="dev.munormae.dune.run.DuneRunConfigurationType"/>
+        <externalSystemManager implementation="dev.munormae.dune.external.DuneExternalSystemManager"/>
         <projectService serviceImplementation="dev.munormae.dune.DuneWatchService"/>
         <projectService serviceImplementation="dev.munormae.dune.run.DuneRunConfigurationProvisioningService"/>
+        <projectService serviceImplementation="dev.munormae.dune.model.DuneProjectModelService"/>
         <projectService serviceImplementation="dev.munormae.toolchain.OCamlToolchainDetectionService"/>
+        <projectService serviceImplementation="dev.munormae.toolchain.OCamlEnvironmentSdkService"/>
+        <projectService serviceImplementation="dev.munormae.project.OCamlProjectModelService"/>
+        <sdkType implementation="dev.munormae.toolchain.OCamlSdkType"/>
+        <projectSdkSetupValidator implementation="dev.munormae.toolchain.OCamlProjectSdkSetupValidator"/>
+        <editorNotificationProvider implementation="dev.munormae.toolchain.OCamlEditorNotificationProvider"/>
+        <gotoRelatedProvider implementation="dev.munormae.navigation.OCamlRelatedFileProvider"/>
+        <codeInsight.lineMarkerProvider
+                language="Dune"
+                implementationClass="dev.munormae.dune.run.DuneRunLineMarkerProvider"/>
         <platform.rpc.backend.remoteApiProvider implementation="dev.munormae.toolchain.OCamlToolchainRpcApiProvider"/>
         <platform.lsp.integrationProvider implementation="dev.munormae.lsp.OCamlLspIntegrationProvider"/>
         <postStartupActivity implementation="dev.munormae.lsp.OCamlLspSettingsActivity"/>
+        <postStartupActivity implementation="dev.munormae.project.OCamlProjectModelActivity"/>
         <postStartupActivity implementation="dev.munormae.dune.run.DuneRunConfigurationProvisioningActivity"/>
         <newProjectWizard.languageGenerator implementation="dev.munormae.project.OCamlNewProjectWizard"/>
         <defaultTemplatePropertiesProvider
@@ -36,10 +50,13 @@
         <action
                 id="OCaml.NewModule"
                 class="dev.munormae.project.CreateOCamlModuleAction"
-                text="OCaml Module"
-                description="Creates an OCaml module, interface, or both"
                 icon="dev.munormae.icons.OCamlIcons.File">
             <add-to-group group-id="NewGroup"/>
+        </action>
+        <action
+                id="OCaml.OpenRepl"
+                class="dev.munormae.repl.OpenOCamlReplAction">
+            <add-to-group group-id="ToolsMenu" anchor="last"/>
         </action>
     </actions>
 </idea-plugin>

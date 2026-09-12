@@ -51,7 +51,7 @@ class DuneLexer : LexerBase() {
             '(' -> singleCharacter(DuneTokenTypes.LPAREN)
             ')' -> singleCharacter(DuneTokenTypes.RPAREN)
             ';' -> scanComment()
-            '"' -> scanString(openingQuote = true)
+            '"' -> if (isEndOfLineStringOpening(tokenStart)) scanEndOfLineString() else scanString(openingQuote = true)
             else -> when {
                 first.isWhitespace() -> scanWhitespace()
                 first == '%' && peek(1) == '{' -> scanVariable()
@@ -100,6 +100,22 @@ class DuneLexer : LexerBase() {
         tokenType = DuneTokenTypes.STRING
     }
 
+    private fun scanEndOfLineString() {
+        tokenEnd = tokenStart + END_OF_LINE_STRING_PREFIX_LENGTH
+        while (tokenEnd < bufferEnd && buffer[tokenEnd] != '\n' && buffer[tokenEnd] != '\r') tokenEnd++
+        if (tokenEnd < bufferEnd) {
+            val first = buffer[tokenEnd++]
+            if (first == '\r' && tokenEnd < bufferEnd && buffer[tokenEnd] == '\n') tokenEnd++
+        }
+        nextState = DEFAULT_STATE
+        tokenType = DuneTokenTypes.STRING
+    }
+
+    private fun isEndOfLineStringOpening(offset: Int): Boolean =
+        buffer.getOrNull(offset) == '"' &&
+            buffer.getOrNull(offset + 1) == '\\' &&
+            (buffer.getOrNull(offset + 2) == '|' || buffer.getOrNull(offset + 2) == '>')
+
     private fun scanVariable() {
         tokenEnd = tokenStart + 2
         while (tokenEnd < bufferEnd && buffer[tokenEnd] != '}') tokenEnd++
@@ -129,6 +145,8 @@ class DuneLexer : LexerBase() {
         const val DEFAULT_STATE = 0
         const val STRING_STATE = 1
         const val ESCAPED_STRING_STATE = 2
+
+        private const val END_OF_LINE_STRING_PREFIX_LENGTH = 3
 
         private val ATOM_DELIMITERS = setOf(' ', '\t', '\n', '\r', '(', ')', ';', '"')
         private val KEYWORDS = setOf(

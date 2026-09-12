@@ -8,10 +8,11 @@ import com.intellij.psi.PsiDirectory
 import com.intellij.psi.PsiFile
 import com.intellij.util.IncorrectOperationException
 import dev.munormae.icons.OCamlIcons
+import dev.munormae.OCamlBundle
 
 class CreateOCamlModuleAction : CreateFileFromTemplateAction(
-    "OCaml Module",
-    "Creates an OCaml module, interface, or both",
+    OCamlBundle.message("module.action.text"),
+    OCamlBundle.message("module.action.description"),
     OCamlIcons.File,
 ) {
     override fun buildDialog(
@@ -20,18 +21,18 @@ class CreateOCamlModuleAction : CreateFileFromTemplateAction(
         builder: CreateFileFromTemplateDialog.Builder,
     ) {
         builder
-            .setTitle("New OCaml Module (snake_case recommended)")
+            .setTitle(OCamlBundle.message("module.dialog.title"))
             .setValidator(MODULE_NAME_VALIDATOR)
-            .addKind("Module (.ml)", OCamlIcons.File, MODULE_TEMPLATE)
-            .addKind("Interface (.mli)", OCamlIcons.File, INTERFACE_TEMPLATE)
-            .addKind("Module + Interface", OCamlIcons.File, MODULE_AND_INTERFACE_TEMPLATE)
+            .addKind(OCamlBundle.message("module.kind.implementation"), OCamlIcons.File, MODULE_TEMPLATE)
+            .addKind(OCamlBundle.message("module.kind.interface"), OCamlIcons.File, INTERFACE_TEMPLATE)
+            .addKind(OCamlBundle.message("module.kind.both"), OCamlIcons.File, MODULE_AND_INTERFACE_TEMPLATE)
     }
 
     public override fun createFile(name: String, templateName: String, directory: PsiDirectory): PsiFile {
         val baseName = moduleFileBaseName(name)
         if (templateName != MODULE_AND_INTERFACE_TEMPLATE) {
             return requireNotNull(super.createFile(baseName, templateName, directory)) {
-                "Unable to create an OCaml file from template $templateName"
+                OCamlBundle.message("module.error.template", templateName)
             }
         }
 
@@ -40,20 +41,20 @@ class CreateOCamlModuleAction : CreateFileFromTemplateAction(
             directory.findFile("$baseName.mli"),
         ).firstOrNull()
         if (conflictingFile != null) {
-            throw IncorrectOperationException("File already exists: ${conflictingFile.name}")
+            throw IncorrectOperationException(OCamlBundle.message("module.error.exists", conflictingFile.name))
         }
 
         val implementation = requireNotNull(super.createFile(baseName, MODULE_TEMPLATE, directory)) {
-            "Unable to create an OCaml implementation file"
+            OCamlBundle.message("module.error.implementation")
         }
         requireNotNull(super.createFile(baseName, INTERFACE_TEMPLATE, directory)) {
-            "Unable to create an OCaml interface file"
+            OCamlBundle.message("module.error.interface")
         }
         return implementation
     }
 
     override fun getActionName(directory: PsiDirectory, newName: String, templateName: String): String =
-        "Create OCaml module ${moduleFileBaseName(newName)}"
+        OCamlBundle.message("module.command.create", moduleFileBaseName(newName))
 
     companion object {
         internal const val MODULE_TEMPLATE = "OCaml Module"

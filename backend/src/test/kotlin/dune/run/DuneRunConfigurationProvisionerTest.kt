@@ -63,4 +63,29 @@ class DuneRunConfigurationProvisionerTest {
         assertTrue(executable.target.endsWith("/deep_tool.exe"))
         assertTrue(executable.target.count { it == '/' } > 8)
     }
+
+    @Test
+    fun `fallback discovery survives Dune end-of-line strings containing parentheses`() {
+        val root = temporaryFolder.newFolder("eol-string-project").toPath()
+        Files.writeString(root.resolve("dune-project"), "(lang dune 3.17)\n")
+        Files.writeString(
+            root.resolve("dune"),
+            """
+                (rule
+                 (action
+                  (echo
+                   "\| text (with parens)
+                   "\| second line
+                  )))
+
+                (executable
+                 (name main))
+            """.trimIndent(),
+        )
+
+        val executable = discoverDuneRunConfigurations(root).single { it.command == DuneCommand.EXEC }
+
+        assertEquals("./main.exe", executable.target)
+        assertEquals("Dune Run main", executable.name)
+    }
 }

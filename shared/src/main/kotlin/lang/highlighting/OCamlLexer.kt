@@ -74,7 +74,9 @@ class OCamlLexer : LexerBase() {
             first == '{' && scanQuotedStringExtension() -> Unit
             first == '\'' -> scanCharacterOrTypeVariable()
             first in '0'..'9' -> scanNumber()
-            first == '#' && peek(1)?.isOcamlLowercaseIdentifierStart() == true -> scanRawIdentifier()
+            first == '#' && scanLineDirective() -> Unit
+            first == '\\' && peek(1) == '#' && peek(2)?.isOcamlLowercaseIdentifierStart() == true ->
+                scanRawIdentifier()
             first == '~' || first == '?' -> scanLabelOrOperator()
             first == '[' && (peek(1) == '@' || peek(1) == '%') -> scanAttribute()
             first.isIdentifierStart() -> scanIdentifier()
@@ -259,13 +261,39 @@ class OCamlLexer : LexerBase() {
 
     private fun quotedStringOpeningAt(offset: Int): QuotedStringOpening? {
         if (buffer.getOrNull(offset) != '{' || offset >= bufferEnd) return null
-        var markerEnd = offset + 1
+        var markerStart = offset + 1
+        if (buffer.getOrNull(markerStart) == '%') {
+            markerStart++
+            if (buffer.getOrNull(markerStart) == '%') markerStart++
+            markerStart = attributeIdEnd(markerStart) ?: return null
+            if (buffer.getOrNull(markerStart) == '|') {
+                return QuotedStringOpening(marker = "", contentStart = markerStart + 1)
+            }
+            if (buffer.getOrNull(markerStart) != ' ' && buffer.getOrNull(markerStart) != '\t') return null
+            while (buffer.getOrNull(markerStart) == ' ' || buffer.getOrNull(markerStart) == '\t') markerStart++
+        }
+
+        var markerEnd = markerStart
         while (markerEnd < bufferEnd && buffer[markerEnd].isQuotedStringMarkerChar()) markerEnd++
         if (markerEnd >= bufferEnd || buffer[markerEnd] != '|') return null
         return QuotedStringOpening(
-            marker = buffer.subSequence(offset + 1, markerEnd).toString(),
+            marker = buffer.subSequence(markerStart, markerEnd).toString(),
             contentStart = markerEnd + 1,
         )
+    }
+
+    private fun attributeIdEnd(startOffset: Int): Int? {
+        var index = startOffset
+        if (buffer.getOrNull(index)?.isIdentifierStart() != true) return null
+        index++
+        while (buffer.getOrNull(index)?.isIdentifierPart() == true) index++
+        while (buffer.getOrNull(index) == '.') {
+            index++
+            if (buffer.getOrNull(index)?.isIdentifierStart() != true) return null
+            index++
+            while (buffer.getOrNull(index)?.isIdentifierPart() == true) index++
+        }
+        return index
     }
 
     private fun indexOf(value: String, startOffset: Int): Int {
@@ -299,9 +327,9 @@ class OCamlLexer : LexerBase() {
             index++
             if (index >= bufferEnd) return -1
             index = when {
-                buffer[index].isDigit() -> consumeDigits(index, 3) { it.isDigit() }
-                buffer[index] == 'x' -> consumeDigits(index + 1, 2) { it.isDigit() || it.lowercaseChar() in 'a'..'f' }
-                buffer[index] == 'o' -> consumeDigits(index + 1, 3) { it in '0'..'7' }
+                buffer[index] in '0'..'9' -> consumeDigits(index, 3) { it in '0'..'9' }
+                buffer[index] == 'x' -> consumeDigits(index + 1, 2) { it in '0'..'9' || it.lowercaseChar() in 'a'..'f' }
+                buffer[index] == 'o' -> consumeOctalCharacterEscape(index + 1)
                 else -> index + 1
             }
             if (index < 0) return -1
@@ -313,6 +341,20 @@ class OCamlLexer : LexerBase() {
         val endOffset = startOffset + count
         if (endOffset > bufferEnd) return -1
         return if ((startOffset until endOffset).all { accepts(buffer[it]) }) endOffset else -1
+    }
+
+    private fun consumeOctalCharacterEscape(startOffset: Int): Int {
+        val endOffset = startOffset + 3
+        if (endOffset > bufferEnd) return -1
+        return if (
+            buffer[startOffset] in '0'..'3' &&
+            buffer[startOffset + 1] in '0'..'7' &&
+            buffer[startOffset + 2] in '0'..'7'
+        ) {
+            endOffset
+        } else {
+            -1
+        }
     }
 
     private fun scanNumber() {
@@ -416,16 +458,46 @@ class OCamlLexer : LexerBase() {
         val text = buffer.subSequence(tokenStart, tokenEnd).toString()
         tokenType = when {
             text in KEYWORDS -> OCamlTokenTypes.KEYWORD
-            text.firstOrNull()?.isUpperCase() == true -> OCamlTokenTypes.CONSTRUCTOR
+            text.firstOrNull()?.isOcamlUppercaseLetter() == true -> OCamlTokenTypes.CONSTRUCTOR
             else -> OCamlTokenTypes.IDENTIFIER
         }
     }
 
     private fun scanRawIdentifier() {
-        tokenEnd = tokenStart + 2
+        tokenEnd = tokenStart + 3
         while (tokenEnd < bufferEnd && buffer[tokenEnd].isIdentifierPart()) tokenEnd++
         tokenType = OCamlTokenTypes.IDENTIFIER
     }
+
+    private fun scanLineDirective(): Boolean {
+        if (!isAtBeginningOfLine()) return false
+
+        var index = tokenStart + 1
+        while (buffer.getOrNull(index) == ' ' || buffer.getOrNull(index) == '\t') index++
+        val lineNumberStart = index
+        while (buffer.getOrNull(index)?.let { it in '0'..'9' } == true) index++
+        if (index == lineNumberStart) return false
+
+        while (buffer.getOrNull(index) == ' ' || buffer.getOrNull(index) == '\t') index++
+        if (buffer.getOrNull(index) != '"') return false
+        index++
+        var escaped = false
+        while (index < bufferEnd) {
+            val current = buffer[index++]
+            if (current == '\n' || current == '\r') return false
+            if (current == '"' && !escaped) {
+                tokenEnd = index
+                tokenType = TokenType.WHITE_SPACE
+                return true
+            }
+            escaped = current == '\\' && !escaped
+            if (current != '\\') escaped = false
+        }
+        return false
+    }
+
+    private fun isAtBeginningOfLine(): Boolean =
+        tokenStart == 0 || buffer[tokenStart - 1] == '\n' || buffer[tokenStart - 1] == '\r'
 
     private fun scanPunctuationOrOperator(first: Char) {
         val single = when (first) {
@@ -469,10 +541,12 @@ class OCamlLexer : LexerBase() {
     private fun peek(delta: Int): Char? =
         buffer.getOrNull(tokenStart + delta)?.takeIf { tokenStart + delta < bufferEnd }
 
-    private fun Char.isIdentifierStart(): Boolean = this == '_' || isLetter()
-    private fun Char.isIdentifierPart(): Boolean = this == '_' || this == '\'' || isLetterOrDigit()
+    private fun Char.isIdentifierStart(): Boolean = this == '_' || isOcamlLetter()
+    private fun Char.isIdentifierPart(): Boolean =
+        this == '_' || this == '\'' || this in '0'..'9' || isOcamlLetter()
     private fun Char.isOcamlLowercaseIdentifierStart(): Boolean = this == '_' || isOcamlLowercaseLetter()
     private fun Char.isQuotedStringMarkerChar(): Boolean = this == '_' || isOcamlLowercaseLetter()
+    private fun Char.isOcamlLetter(): Boolean = isOcamlLowercaseLetter() || isOcamlUppercaseLetter()
     private fun Char.isOcamlLowercaseLetter(): Boolean =
         this in 'a'..'z' ||
             this in '\u00df'..'\u00f6' ||
@@ -480,6 +554,15 @@ class OCamlLexer : LexerBase() {
             this == '\u0153' ||
             this == '\u0161' ||
             this == '\u017e'
+    private fun Char.isOcamlUppercaseLetter(): Boolean =
+        this in 'A'..'Z' ||
+            this in '\u00c0'..'\u00d6' ||
+            this in '\u00d8'..'\u00de' ||
+            this == '\u0152' ||
+            this == '\u0160' ||
+            this == '\u017d' ||
+            this == '\u0178' ||
+            this == '\u1e9e'
 
     private fun Char.isHexDigit(): Boolean = this in '0'..'9' || lowercaseChar() in 'a'..'f'
 

@@ -1,223 +1,309 @@
 package dev.munormae.settings
 
-import com.intellij.openapi.options.Configurable
+import com.intellij.openapi.fileChooser.FileChooserDescriptorFactory
+import com.intellij.openapi.options.BoundConfigurable
 import com.intellij.openapi.project.Project
-import com.intellij.util.messages.MessageBusConnection
-import com.intellij.ui.components.JBCheckBox
-import com.intellij.ui.components.JBLabel
-import com.intellij.ui.components.JBScrollPane
-import com.intellij.ui.components.JBTextField
-import com.intellij.util.ui.FormBuilder
-import com.intellij.util.ui.JBUI
-import java.awt.BorderLayout
-import javax.swing.JComponent
-import javax.swing.JButton
-import javax.swing.JPanel
+import com.intellij.openapi.ui.DialogPanel
+import com.intellij.openapi.ui.Messages
+import com.intellij.openapi.ui.TextFieldWithBrowseButton
+import com.intellij.ui.CollectionComboBoxModel
+import com.intellij.ui.dsl.builder.AlignX
+import com.intellij.ui.dsl.builder.bindSelected
+import com.intellij.ui.dsl.builder.bindText
+import com.intellij.ui.dsl.builder.panel
+import dev.munormae.OCamlBundle
+import dev.munormae.toolchain.DuneProjectSyncState
+import dev.munormae.toolchain.OCamlEnvironmentDescriptor
+import dev.munormae.toolchain.OCamlEnvironmentDetectionState
+import dev.munormae.toolchain.OCamlEnvironmentKind
+import dev.munormae.toolchain.OCamlToolAvailability
+import dev.munormae.toolchain.OCamlToolStatus
+import dev.munormae.toolchain.OCamlToolchainSettingsDto
 import dev.munormae.toolchain.OCamlToolchainStatusChangedListener
 import dev.munormae.toolchain.OCamlToolchainStatusService
 import dev.munormae.toolchain.OCamlToolchainStatusSnapshot
-import dev.munormae.toolchain.OCamlToolchainSettingsDto
+import javax.swing.JButton
+import javax.swing.JComboBox
+import javax.swing.JLabel
 
-class OCamlSettingsConfigurable(private val project: Project) : Configurable {
-    private var component: JPanel? = null
-    private var lspEnabled: JBCheckBox? = null
-    private var useOpam: JBCheckBox? = null
-    private var opamExecutable: JBTextField? = null
-    private var opamSwitch: JBTextField? = null
-    private var lspExecutable: JBTextField? = null
-    private var additionalLspArguments: JBTextField? = null
-    private var duneWatchEnabled: JBCheckBox? = null
-    private var duneExecutable: JBTextField? = null
-    private var ocamlformatExecutable: JBTextField? = null
-    private var opamStatus: JBLabel? = null
-    private var lspStatus: JBLabel? = null
-    private var duneStatus: JBLabel? = null
-    private var ocamlformatStatus: JBLabel? = null
-    private var statusConnection: MessageBusConnection? = null
+class OCamlSettingsConfigurable(private val project: Project) :
+    BoundConfigurable(OCamlBundle.message("settings.display.name")) {
 
-    override fun getDisplayName(): String = "OCaml"
+    private val projectSettings: OCamlProjectSettings
+        get() = OCamlProjectSettings.getInstance(project)
+    private val workspaceSettings: OCamlWorkspaceSettings
+        get() = OCamlWorkspaceSettings.getInstance(project)
+    private val statusService: OCamlToolchainStatusService
+        get() = OCamlToolchainStatusService.getInstance(project)
 
-    override fun createComponent(): JComponent {
-        lspEnabled = JBCheckBox("Enable ocamllsp language support")
-        useOpam = JBCheckBox("Run language tools through opam exec")
-        opamExecutable = JBTextField()
-        opamSwitch = JBTextField()
-        lspExecutable = JBTextField()
-        additionalLspArguments = JBTextField()
-        duneWatchEnabled = JBCheckBox("Run dune build --watch for richer LSP diagnostics")
-        duneExecutable = JBTextField()
-        ocamlformatExecutable = JBTextField()
-        opamStatus = JBLabel()
-        lspStatus = JBLabel()
-        duneStatus = JBLabel()
-        ocamlformatStatus = JBLabel()
+    private val environmentModel = CollectionComboBoxModel<OCamlEnvironmentDescriptor>()
+    private lateinit var environmentCombo: JComboBox<OCamlEnvironmentDescriptor>
+    private lateinit var compilerStatus: JLabel
+    private lateinit var duneStatus: JLabel
+    private lateinit var lspStatus: JLabel
+    private lateinit var formatterStatus: JLabel
+    private lateinit var duneProject: JLabel
+    private lateinit var duneProjectStatus: JLabel
+    private lateinit var installButton: JButton
+    private lateinit var environmentPrefixOverride: TextFieldWithBrowseButton
+    private lateinit var opamOverride: TextFieldWithBrowseButton
+    private lateinit var lspOverride: TextFieldWithBrowseButton
+    private lateinit var duneOverride: TextFieldWithBrowseButton
+    private lateinit var formatterOverride: TextFieldWithBrowseButton
 
-        val autoDetect = JButton("Use OPAM/PATH").apply {
-            addActionListener {
-                opamExecutable?.text = ""
-                lspExecutable?.text = ""
-                duneExecutable?.text = ""
-                ocamlformatExecutable?.text = ""
-                requestToolchainRefresh()
+    override fun createPanel(): DialogPanel {
+        val shared = projectSettings.state
+        val local = workspaceSettings.state
+        val executableChooser = FileChooserDescriptorFactory.createSingleFileNoJarsDescriptor()
+            .withTitle(OCamlBundle.message("settings.file.chooser"))
+
+        project.messageBus.connect(checkNotNull(disposable)).subscribe(
+            OCamlToolchainStatusService.CHANGED_TOPIC,
+            OCamlToolchainStatusChangedListener(::updateStatus),
+        )
+
+        return panel {
+            group(OCamlBundle.message("settings.environment.group")) {
+                row(OCamlBundle.message("settings.environment.label")) {
+                    environmentCombo = comboBox(environmentModel)
+                        .align(AlignX.FILL)
+                        .component
+                }
+                row {
+                    compilerStatus = label("").component
+                    installButton = button(OCamlBundle.message("settings.install.tools")) {
+                        installSelectedEnvironmentTools()
+                    }.component
+                }
             }
+
+            group(OCamlBundle.message("settings.language.group")) {
+                row {
+                    checkBox(OCamlBundle.message("settings.language.enable"))
+                        .bindSelected(shared::lspEnabled)
+                }
+                row {
+                    checkBox(OCamlBundle.message("settings.format.enable"))
+                        .bindSelected(shared::formatWithOcamlformat)
+                }
+                row(OCamlBundle.message("settings.advanced.lsp")) {
+                    lspStatus = label("").component
+                }
+                row(OCamlBundle.message("settings.advanced.formatter")) {
+                    formatterStatus = label("").component
+                }
+            }
+
+            group(OCamlBundle.message("settings.dune.group")) {
+                row(OCamlBundle.message("settings.dune.project")) {
+                    duneProject = label("").component
+                }
+                row(OCamlBundle.message("settings.dune.status")) {
+                    duneProjectStatus = label("").component
+                }
+                row(OCamlBundle.message("settings.advanced.dune")) {
+                    duneStatus = label("").component
+                }
+                row {
+                    button(OCamlBundle.message("settings.refresh")) { requestRefresh() }
+                }
+            }
+
+            collapsibleGroup(OCamlBundle.message("settings.advanced.group")) {
+                row(OCamlBundle.message("settings.advanced.environment.prefix")) {
+                    environmentPrefixOverride = textFieldWithBrowseButton(
+                        FileChooserDescriptorFactory.createSingleFolderDescriptor()
+                            .withTitle(OCamlBundle.message("settings.environment.prefix.chooser")),
+                        project,
+                    )
+                        .bindText(
+                            { local.environmentPrefixOverride.orEmpty() },
+                            { local.environmentPrefixOverride = it.trim() },
+                        )
+                        .align(AlignX.FILL)
+                        .component
+                }
+                row(OCamlBundle.message("settings.advanced.opam")) {
+                    opamOverride = textFieldWithBrowseButton(executableChooser, project)
+                        .bindText(
+                            { local.opamExecutableOverride.orEmpty() },
+                            { local.opamExecutableOverride = it.trim() },
+                        )
+                        .align(AlignX.FILL)
+                        .component
+                }
+                row(OCamlBundle.message("settings.advanced.lsp")) {
+                    lspOverride = textFieldWithBrowseButton(executableChooser, project)
+                        .bindText(
+                            { local.lspExecutableOverride.orEmpty() },
+                            { local.lspExecutableOverride = it.trim() },
+                        )
+                        .align(AlignX.FILL)
+                        .component
+                }
+                row(OCamlBundle.message("settings.advanced.dune")) {
+                    duneOverride = textFieldWithBrowseButton(executableChooser, project)
+                        .bindText(
+                            { local.duneExecutableOverride.orEmpty() },
+                            { local.duneExecutableOverride = it.trim() },
+                        )
+                        .align(AlignX.FILL)
+                        .component
+                }
+                row(OCamlBundle.message("settings.advanced.formatter")) {
+                    formatterOverride = textFieldWithBrowseButton(executableChooser, project)
+                        .bindText(
+                            { local.ocamlformatExecutableOverride.orEmpty() },
+                            { local.ocamlformatExecutableOverride = it.trim() },
+                        )
+                        .align(AlignX.FILL)
+                        .component
+                }
+                row(OCamlBundle.message("settings.advanced.arguments")) {
+                    textField()
+                        .bindText(
+                            { local.additionalLspArguments.orEmpty() },
+                            { local.additionalLspArguments = it.trim() },
+                        )
+                        .align(AlignX.FILL)
+                }
+                row {
+                    checkBox(OCamlBundle.message("settings.advanced.watch"))
+                        .bindSelected(local::manageDuneWatch)
+                }
+            }.apply { expanded = false }
+        }.also {
+            updateStatus(statusService.snapshot)
+            environmentCombo.addActionListener { updateSelectedEnvironmentPresentation() }
         }
-        val refreshStatus = JButton("Refresh status").apply {
-            addActionListener { requestToolchainRefresh() }
-        }
-
-        statusConnection?.disconnect()
-        statusConnection = project.messageBus.connect().apply {
-            subscribe(
-                OCamlToolchainStatusService.CHANGED_TOPIC,
-                OCamlToolchainStatusChangedListener(::updateStatusLabels),
-            )
-        }
-
-        lspEnabled!!.addActionListener { updateEnabledState() }
-        useOpam!!.addActionListener { updateEnabledState() }
-        duneWatchEnabled!!.addActionListener { updateEnabledState() }
-
-        val form = FormBuilder.createFormBuilder()
-            .addComponent(lspEnabled!!)
-            .addComponent(useOpam!!)
-            .addLabeledComponent("opam executable:", opamExecutable!!)
-            .addLabeledComponent("opam switch:", opamSwitch!!)
-            .addLabeledComponent("ocamllsp executable:", lspExecutable!!)
-            .addLabeledComponent("Additional LSP arguments:", additionalLspArguments!!)
-            .addSeparator(12)
-            .addComponent(duneWatchEnabled!!)
-            .addLabeledComponent("dune executable:", duneExecutable!!)
-            .addLabeledComponent("ocamlformat executable:", ocamlformatExecutable!!)
-            .addSeparator(12)
-            .addComponent(JBLabel("Detected toolchain"))
-            .addLabeledComponent("opam:", opamStatus!!)
-            .addLabeledComponent("ocamllsp:", lspStatus!!)
-            .addLabeledComponent("dune:", duneStatus!!)
-            .addLabeledComponent("ocamlformat:", ocamlformatStatus!!)
-            .addComponent(JPanel().apply {
-                add(autoDetect)
-                add(refreshStatus)
-            })
-            .addComponent(JBLabel("Refresh tests the values above without applying or saving them."))
-            .addComponent(
-                JBLabel(
-                    "<html>Leave executable fields empty to use <code>opam</code>, " +
-                        "<code>ocamllsp</code>, <code>dune</code>, and <code>ocamlformat</code> from PATH.</html>",
-                ),
-            )
-            .addComponentFillVertically(JPanel(), 0)
-            .panel
-
-        component = JPanel(BorderLayout()).apply {
-            border = JBUI.Borders.empty(10)
-            add(JBScrollPane(form).apply { border = JBUI.Borders.empty() }, BorderLayout.CENTER)
-        }
-        reset()
-        return component!!
-    }
-
-    override fun isModified(): Boolean {
-        val state = OCamlProjectSettings.getInstance(project).state
-        return lspEnabled?.isSelected != state.lspEnabled ||
-            useOpam?.isSelected != state.useOpam ||
-            opamExecutable.textValue() != state.opamExecutable ||
-            opamSwitch.textValue() != state.opamSwitch ||
-            lspExecutable.textValue() != state.lspExecutable ||
-            additionalLspArguments.textValue() != state.additionalLspArguments ||
-            duneWatchEnabled?.isSelected != state.duneWatchEnabled ||
-            duneExecutable.textValue() != state.duneExecutable ||
-            ocamlformatExecutable.textValue() != state.ocamlformatExecutable
     }
 
     override fun apply() {
-        val settings = OCamlProjectSettings.getInstance(project)
-        settings.state.apply {
-            lspEnabled = this@OCamlSettingsConfigurable.lspEnabled?.isSelected == true
-            useOpam = this@OCamlSettingsConfigurable.useOpam?.isSelected == true
-            opamExecutable = this@OCamlSettingsConfigurable.opamExecutable.textValue()
-            opamSwitch = this@OCamlSettingsConfigurable.opamSwitch.textValue()
-            lspExecutable = this@OCamlSettingsConfigurable.lspExecutable.textValue()
-            additionalLspArguments = this@OCamlSettingsConfigurable.additionalLspArguments.textValue()
-            duneWatchEnabled = this@OCamlSettingsConfigurable.duneWatchEnabled?.isSelected == true
-            duneExecutable = this@OCamlSettingsConfigurable.duneExecutable.textValue()
-            ocamlformatExecutable = this@OCamlSettingsConfigurable.ocamlformatExecutable.textValue()
+        val before = workspaceSettings.state.environmentId.orEmpty()
+        val beforePrefix = workspaceSettings.state.environmentPrefixOverride.orEmpty()
+        val selectedEnvironment = environmentCombo.selectedItem as? OCamlEnvironmentDescriptor
+        val enteredPrefix = environmentPrefixOverride.text.trim()
+        val prefixChanged = enteredPrefix != beforePrefix
+        val selectByPrefix = prefixChanged && enteredPrefix.isNotBlank()
+        val selected = if (prefixChanged) "" else selectedEnvironment?.id.orEmpty()
+        val selectedPrefix = when {
+            selectByPrefix -> enteredPrefix
+            prefixChanged -> ""
+            selectedEnvironment?.kind == OCamlEnvironmentKind.CUSTOM -> selectedEnvironment.prefix
+            selected != before -> ""
+            else -> beforePrefix
         }
-        settings.notifyChanged()
+        workspaceSettings.state.environmentId = selected
+        environmentPrefixOverride.text = selectedPrefix
+        super.apply()
+        projectSettings.notifyChanged()
+        if (selected != before || selectedPrefix != beforePrefix) {
+            statusService.selectEnvironment(selected, selectedPrefix)
+        } else {
+            requestRefresh()
+        }
     }
 
     override fun reset() {
-        val state = OCamlProjectSettings.getInstance(project).state
-        lspEnabled?.isSelected = state.lspEnabled
-        useOpam?.isSelected = state.useOpam
-        opamExecutable?.text = state.opamExecutable
-        opamSwitch?.text = state.opamSwitch
-        lspExecutable?.text = state.lspExecutable
-        additionalLspArguments?.text = state.additionalLspArguments
-        duneWatchEnabled?.isSelected = state.duneWatchEnabled
-        duneExecutable?.text = state.duneExecutable
-        ocamlformatExecutable?.text = state.ocamlformatExecutable
-        updateEnabledState()
+        super.reset()
+        selectConfiguredEnvironment(statusService.snapshot)
+        updateSelectedEnvironmentPresentation()
     }
 
-    override fun disposeUIResources() {
-        component = null
-        lspEnabled = null
-        useOpam = null
-        opamExecutable = null
-        opamSwitch = null
-        lspExecutable = null
-        additionalLspArguments = null
-        duneWatchEnabled = null
-        duneExecutable = null
-        ocamlformatExecutable = null
-        opamStatus = null
-        lspStatus = null
-        duneStatus = null
-        ocamlformatStatus = null
-        statusConnection?.disconnect()
-        statusConnection = null
-    }
-
-    private fun updateEnabledState() {
-        val enabled = lspEnabled?.isSelected == true
-        useOpam?.isEnabled = true
-        opamExecutable?.isEnabled = useOpam?.isSelected == true
-        opamSwitch?.isEnabled = useOpam?.isSelected == true
-        lspExecutable?.isEnabled = enabled
-        additionalLspArguments?.isEnabled = enabled
-        duneWatchEnabled?.isEnabled = enabled
-        duneExecutable?.isEnabled = true
-        ocamlformatExecutable?.isEnabled = true
-        updateStatusLabels(OCamlToolchainStatusService.getInstance(project).snapshot)
-    }
-
-    private fun updateStatusLabels(snapshot: OCamlToolchainStatusSnapshot) {
-        opamStatus?.text = snapshot.opam
-        lspStatus?.text = snapshot.ocamllsp
-        duneStatus?.text = snapshot.dune
-        ocamlformatStatus?.text = snapshot.ocamlformat
-    }
-
-    private fun requestToolchainRefresh() {
-        showDetectingStatus()
-        OCamlToolchainStatusService.getInstance(project).refresh(
+    private fun requestRefresh() {
+        showDetecting()
+        statusService.refresh(
             OCamlToolchainSettingsDto(
-                useOpam = useOpam?.isSelected == true,
-                opamExecutable = opamExecutable.textValue(),
-                opamSwitch = opamSwitch.textValue(),
-                lspExecutable = lspExecutable.textValue(),
-                duneExecutable = duneExecutable.textValue(),
-                ocamlformatExecutable = ocamlformatExecutable.textValue(),
+                environmentId = (environmentCombo.selectedItem as? OCamlEnvironmentDescriptor)?.id.orEmpty(),
+                environmentPrefixOverride = environmentPrefixOverride.text.trim(),
+                opamExecutableOverride = opamOverride.text.trim(),
+                lspExecutableOverride = lspOverride.text.trim(),
+                duneExecutableOverride = duneOverride.text.trim(),
+                ocamlformatExecutableOverride = formatterOverride.text.trim(),
             ),
         )
     }
 
-    private fun showDetectingStatus() {
-        opamStatus?.text = "Detecting..."
-        lspStatus?.text = "Detecting..."
-        duneStatus?.text = "Detecting..."
-        ocamlformatStatus?.text = "Detecting..."
+    private fun installSelectedEnvironmentTools() {
+        val environment = environmentCombo.selectedItem as? OCamlEnvironmentDescriptor ?: return
+        val answer = Messages.showYesNoDialog(
+            project,
+            OCamlBundle.message("settings.install.confirm", environment.name),
+            OCamlBundle.message("settings.install.confirm.title"),
+            Messages.getQuestionIcon(),
+        )
+        if (answer == Messages.YES) {
+            showDetecting()
+            statusService.installRequiredTools(environment.id)
+        }
     }
 
-    private fun JBTextField?.textValue(): String = this?.text?.trim().orEmpty()
+    private fun updateStatus(snapshot: OCamlToolchainStatusSnapshot) {
+        val selectedBefore = (environmentCombo.selectedItem as? OCamlEnvironmentDescriptor)?.id
+        environmentModel.replaceAll(snapshot.environments)
+        val selectedId = selectedBefore ?: workspaceSettings.state.environmentId.orEmpty()
+        environmentModel.selectedItem = snapshot.environments.firstOrNull { it.id == selectedId }
+            ?: snapshot.selectedEnvironment
+        environmentCombo.isEnabled = snapshot.environments.isNotEmpty()
+        environmentCombo.toolTipText = if (snapshot.environments.isEmpty()) {
+            OCamlBundle.message("settings.environment.empty")
+        } else null
+        updateSelectedEnvironmentPresentation()
+        duneProject.text = snapshot.duneProject.root.ifBlank { "—" }
+        duneProjectStatus.text = when (snapshot.duneProject.state) {
+            DuneProjectSyncState.NOT_LOADED -> OCamlBundle.message("status.dune.not.loaded")
+            DuneProjectSyncState.LOADING -> OCamlBundle.message("status.dune.loading")
+            DuneProjectSyncState.READY -> OCamlBundle.message("status.dune.ready")
+            DuneProjectSyncState.FAILED -> OCamlBundle.message("status.dune.failed", snapshot.duneProject.problem)
+        }
+        when (snapshot.detectionState) {
+            OCamlEnvironmentDetectionState.DETECTING -> showDetecting()
+            OCamlEnvironmentDetectionState.BLOCKED -> showToolStatus(OCamlBundle.message("status.blocked"))
+            OCamlEnvironmentDetectionState.FAILED -> showToolStatus(
+                OCamlBundle.message("status.error", snapshot.problem),
+            )
+            OCamlEnvironmentDetectionState.NOT_CHECKED,
+            OCamlEnvironmentDetectionState.READY -> Unit
+        }
+    }
+
+    private fun selectConfiguredEnvironment(snapshot: OCamlToolchainStatusSnapshot) {
+        val configuredId = workspaceSettings.state.environmentId.orEmpty()
+        environmentModel.selectedItem = snapshot.environments.firstOrNull { it.id == configuredId }
+            ?: snapshot.selectedEnvironment
+    }
+
+    private fun updateSelectedEnvironmentPresentation() {
+        val environment = environmentCombo.selectedItem as? OCamlEnvironmentDescriptor
+        compilerStatus.text = environment?.compiler?.statusText() ?: OCamlBundle.message("settings.environment.empty")
+        lspStatus.text = environment?.languageServer?.statusText() ?: OCamlBundle.message("status.not.checked")
+        duneStatus.text = environment?.dune?.statusText() ?: OCamlBundle.message("status.not.checked")
+        formatterStatus.text = environment?.formatter?.statusText() ?: OCamlBundle.message("status.not.checked")
+        installButton.isEnabled = environment?.compiler?.isAvailable == true &&
+            environment.canInstallTools &&
+            !environment.hasAllTools
+    }
+
+    private fun showDetecting() {
+        showToolStatus(OCamlBundle.message("status.detecting"))
+        if (::installButton.isInitialized) installButton.isEnabled = false
+    }
+
+    private fun showToolStatus(text: String) {
+        compilerStatus.text = text
+        lspStatus.text = text
+        duneStatus.text = text
+        formatterStatus.text = text
+    }
+
+    private fun OCamlToolStatus.statusText(): String = when (availability) {
+        OCamlToolAvailability.AVAILABLE -> OCamlBundle.message(
+            "status.available",
+            version.ifBlank { executable },
+        )
+        OCamlToolAvailability.MISSING -> OCamlBundle.message("status.missing")
+        OCamlToolAvailability.ERROR -> OCamlBundle.message("status.error", detail)
+        OCamlToolAvailability.BLOCKED -> OCamlBundle.message("status.blocked")
+        OCamlToolAvailability.NOT_CHECKED -> OCamlBundle.message("status.not.checked")
+    }
 }

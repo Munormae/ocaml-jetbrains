@@ -34,4 +34,21 @@ class SExpressionTest {
 
         assertEquals("line\nbAcontinued", atom.value)
     }
+
+    @Test
+    fun `parser handles mixed Dune end-of-line string blocks`() {
+        val expression = parseSExpressions(
+            """
+                (echo
+                 "\| first line (with parens)\n
+                 "\> second \n line (with parens)
+                )
+            """.trimIndent(),
+        ).single() as SList
+
+        assertEquals(
+            listOf("first line (with parens)\n\nsecond \\n line (with parens)"),
+            expression.atomValuesAfterHead(),
+        )
+    }
 }

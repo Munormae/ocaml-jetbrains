@@ -1,192 +1,35 @@
 package dev.munormae.project
 
-import com.intellij.ide.wizard.AbstractNewProjectWizardStep
-import com.intellij.ide.wizard.NewProjectWizardBaseData
 import com.intellij.ide.wizard.NewProjectWizardStep
 import com.intellij.ide.wizard.language.LanguageGeneratorNewProjectWizard
-import com.intellij.openapi.application.ApplicationManager
-import com.intellij.openapi.fileEditor.FileEditorManager
-import com.intellij.openapi.project.Project
-import com.intellij.openapi.vfs.VfsUtil
-import com.intellij.openapi.vfs.VirtualFile
-import com.intellij.ui.DocumentAdapter
-import com.intellij.ui.components.JBCheckBox
-import com.intellij.ui.components.JBLabel
-import com.intellij.ui.components.JBTextField
-import com.intellij.ui.dsl.builder.Panel
-import com.intellij.util.concurrency.AppExecutorUtil
+import dev.munormae.OCamlBundle
 import dev.munormae.icons.OCamlIcons
 import dev.munormae.dune.run.DuneCommand
 import dev.munormae.dune.run.DuneRunConfigurationSpec
-import dev.munormae.dune.run.provisionDuneRunConfigurations
-import dev.munormae.settings.OCamlProjectSettings
 import dev.munormae.toolchain.DEFAULT_DUNE_LANGUAGE_VERSION
-import dev.munormae.toolchain.detectDuneLanguageVersion
 import java.util.Locale
-import java.util.concurrent.atomic.AtomicLong
 import javax.swing.Icon
-import javax.swing.JButton
-import javax.swing.JComboBox
-import javax.swing.Timer
-import javax.swing.event.DocumentEvent
 
 class OCamlNewProjectWizard : LanguageGeneratorNewProjectWizard {
     override val name: String = "OCaml"
     override val icon: Icon = OCamlIcons.File
     override val ordinal: Int = 150
 
-    override fun createStep(parent: NewProjectWizardStep): NewProjectWizardStep = OCamlProjectStep(parent)
+    override fun createStep(parent: NewProjectWizardStep): NewProjectWizardStep = OCamlEnvironmentProjectStep(parent)
 }
 
-private class OCamlProjectStep(parent: NewProjectWizardStep) : AbstractNewProjectWizardStep(parent) {
-    private val template = JComboBox(OCamlProjectTemplate.entries.toTypedArray())
-    private val addTests = JBCheckBox("Add a sample test", false)
-    private val useOpam = JBCheckBox("Run language tools through opam", true)
-    private val startDuneWatch = JBCheckBox("Run dune build --watch for richer diagnostics", true)
-    private val opamSwitch = JBTextField()
-    private val duneLanguageVersion = JBTextField(DEFAULT_DUNE_LANGUAGE_VERSION)
-    private val installedDuneVersion = JBLabel("Detecting...")
-    private val useInstalledDuneVersion = JButton("Use installed version").apply { isEnabled = false }
-    private val detectionGeneration = AtomicLong()
-    private val detectionTimer = Timer(400) { refreshDetectedDuneVersion() }.apply { isRepeats = false }
-    private var detectedDuneLanguageVersion: String? = null
+internal enum class OCamlProjectTemplate {
+    MINIMAL,
+    APPLICATION,
+    LIBRARY,
+    APPLICATION_WITH_LIBRARY;
 
-    init {
-        template.addActionListener { updateTemplateControls() }
-        useOpam.addActionListener {
-            opamSwitch.isEnabled = useOpam.isSelected
-            scheduleDuneVersionDetection()
-        }
-        opamSwitch.document.addDocumentListener(object : DocumentAdapter() {
-            override fun textChanged(event: DocumentEvent) = scheduleDuneVersionDetection()
-        })
-        useInstalledDuneVersion.addActionListener {
-            detectedDuneLanguageVersion?.let { duneLanguageVersion.text = it }
-        }
-        updateTemplateControls()
-        refreshDetectedDuneVersion()
+    override fun toString(): String = when (this) {
+        MINIMAL -> OCamlBundle.message("wizard.project.minimal")
+        APPLICATION -> OCamlBundle.message("wizard.project.application")
+        LIBRARY -> OCamlBundle.message("wizard.project.library")
+        APPLICATION_WITH_LIBRARY -> OCamlBundle.message("wizard.project.application.library")
     }
-
-    override fun setupUI(builder: Panel) {
-        builder.row("Template:") {
-            cell(template)
-        }
-        builder.row("Dune language:") {
-            cell(duneLanguageVersion)
-                .comment("Minimum compatible Dune language version. Keep 3.0 unless newer syntax is required.")
-        }
-        builder.row("Installed Dune:") {
-            cell(installedDuneVersion)
-            cell(useInstalledDuneVersion)
-        }
-        builder.row {
-            cell(addTests)
-        }
-        builder.row {
-            cell(useOpam)
-        }
-        builder.row {
-            cell(startDuneWatch)
-        }
-        builder.row("opam switch:") {
-            cell(opamSwitch)
-                .comment("Optional. Leave empty to use the current opam switch.")
-        }
-    }
-
-    override fun setupProject(project: Project) {
-        val baseData = checkNotNull(data.getUserData(NewProjectWizardBaseData.KEY)) {
-            "New Project Wizard base data is unavailable"
-        }
-        val projectName = sanitizeProjectName(baseData.name)
-        val selectedTemplate = template.selectedItem as? OCamlProjectTemplate ?: OCamlProjectTemplate.MINIMAL
-        val generatedFiles = createProjectFiles(
-            projectName,
-            selectedTemplate,
-            addTests.isSelected,
-            normalizeDuneLanguageVersion(duneLanguageVersion.text),
-        )
-        var fileToOpen: VirtualFile? = null
-
-        ApplicationManager.getApplication().runWriteAction {
-            val root = VfsUtil.createDirectories(baseData.contentEntryPath)
-            for ((relativePath, contents) in generatedFiles) {
-                val parentPath = relativePath.substringBeforeLast('/', "")
-                val fileName = relativePath.substringAfterLast('/')
-                val directory = if (parentPath.isEmpty()) root else createRelativeDirectory(root, parentPath)
-                val file = directory.findChild(fileName) ?: directory.createChildData(this, fileName)
-                VfsUtil.saveText(file, contents)
-                if (relativePath == selectedTemplate.entryFile(projectName)) fileToOpen = file
-            }
-        }
-
-        OCamlProjectSettings.getInstance(project).state.apply {
-            useOpam = this@OCamlProjectStep.useOpam.isSelected
-            opamSwitch = this@OCamlProjectStep.opamSwitch.text.trim()
-            duneWatchEnabled = this@OCamlProjectStep.startDuneWatch.isSelected
-        }
-        OCamlProjectSettings.getInstance(project).notifyChanged()
-        val runConfigurations = generatedProjectRunConfigurations(
-            selectedTemplate,
-            projectName,
-            addTests.isSelected,
-        )
-        ApplicationManager.getApplication().invokeLater {
-            if (!project.isDisposed) provisionDuneRunConfigurations(project, runConfigurations)
-        }
-
-        fileToOpen?.let { file ->
-            ApplicationManager.getApplication().invokeLater {
-                if (!project.isDisposed && file.isValid) {
-                    FileEditorManager.getInstance(project).openFile(file, true)
-                }
-            }
-        }
-    }
-
-    private fun updateTemplateControls() {
-        val isMinimal = template.selectedItem == OCamlProjectTemplate.MINIMAL
-        if (isMinimal) addTests.isSelected = false
-        addTests.isEnabled = !isMinimal
-    }
-
-    private fun scheduleDuneVersionDetection() {
-        installedDuneVersion.text = "Detecting..."
-        useInstalledDuneVersion.isEnabled = false
-        detectionTimer.restart()
-    }
-
-    private fun refreshDetectedDuneVersion() {
-        val generation = detectionGeneration.incrementAndGet()
-        val throughOpam = useOpam.isSelected
-        val selectedSwitch = opamSwitch.text.trim()
-        AppExecutorUtil.getAppExecutorService().execute {
-            val detected = detectDuneLanguageVersion(throughOpam, selectedSwitch)
-            ApplicationManager.getApplication().invokeLater {
-                if (detectionGeneration.get() != generation) return@invokeLater
-                detectedDuneLanguageVersion = detected
-                installedDuneVersion.text = detected ?: "Not available"
-                useInstalledDuneVersion.isEnabled = detected != null
-            }
-        }
-    }
-
-    private fun createRelativeDirectory(root: VirtualFile, relativePath: String): VirtualFile {
-        var current = root
-        for (name in relativePath.split('/')) {
-            current = current.findChild(name) ?: current.createChildDirectory(this, name)
-        }
-        return current
-    }
-}
-
-internal enum class OCamlProjectTemplate(private val label: String) {
-    MINIMAL("Minimal"),
-    APPLICATION("Executable"),
-    LIBRARY("Library"),
-    APPLICATION_WITH_LIBRARY("Executable + library");
-
-    override fun toString(): String = label
 
     fun entryFile(projectName: String): String = when (this) {
         MINIMAL -> "main.ml"

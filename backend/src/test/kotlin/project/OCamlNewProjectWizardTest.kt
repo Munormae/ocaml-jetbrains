@@ -5,12 +5,71 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import dev.munormae.toolchain.OCamlEnvironmentDescriptor
+import dev.munormae.toolchain.OCamlEnvironmentKind
+import dev.munormae.toolchain.OCamlToolAvailability
+import dev.munormae.toolchain.OCamlToolStatus
 
 class OCamlNewProjectWizardTest {
+    @Test
+    fun `wizard exposes only user facing project types`() {
+        assertEquals(
+            listOf(
+                OCamlProjectTemplate.APPLICATION,
+                OCamlProjectTemplate.LIBRARY,
+                OCamlProjectTemplate.APPLICATION_WITH_LIBRARY,
+            ),
+            WIZARD_PROJECT_TEMPLATES,
+        )
+    }
+
     @Test
     fun `project names are normalized for Dune`() {
         assertEquals("my_project", sanitizeProjectName("My Project"))
         assertEquals("project_42_tools", sanitizeProjectName("42 Tools"))
+    }
+
+    @Test
+    fun `wizard makes the derived Dune package name visible`() {
+        assertEquals("Dune package: my_project", dunePackageNamePresentation("My Project"))
+    }
+
+    @Test
+    fun `project creation requires a complete environment or an explicit repair plan`() {
+        val available = OCamlToolStatus(OCamlToolAvailability.AVAILABLE, "1", "/bin/tool")
+        val missing = OCamlToolStatus(OCamlToolAvailability.MISSING)
+        val environment = OCamlEnvironmentDescriptor(
+            id = "opam:5.3.0",
+            name = "OCaml 5.3.0",
+            kind = OCamlEnvironmentKind.OPAM_SWITCH,
+            compiler = available,
+            dune = available,
+            languageServer = missing,
+            formatter = missing,
+            canInstallTools = true,
+        )
+
+        assertFalse(canCreateOCamlProject(environment, createLocalEnvironment = false, installMissingTools = false))
+        assertTrue(canCreateOCamlProject(environment, createLocalEnvironment = false, installMissingTools = true))
+        assertTrue(canCreateOCamlProject(null, createLocalEnvironment = true, installMissingTools = true))
+    }
+
+    @Test
+    fun `wizard accepts an OPAM environment whose missing project tools will be installed`() {
+        val available = OCamlToolStatus(OCamlToolAvailability.AVAILABLE, "5.3.0", "/bin/ocamlc")
+        val missing = OCamlToolStatus(OCamlToolAvailability.MISSING)
+        val environment = OCamlEnvironmentDescriptor(
+            id = "opam:5.3.0",
+            name = "OCaml 5.3.0",
+            kind = OCamlEnvironmentKind.OPAM_SWITCH,
+            compiler = available,
+            dune = missing,
+            languageServer = missing,
+            formatter = missing,
+            canInstallTools = true,
+        )
+
+        assertTrue(canCreateOCamlProject(environment, createLocalEnvironment = false, installMissingTools = true))
     }
 
     @Test

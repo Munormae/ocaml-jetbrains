@@ -40,7 +40,7 @@ private class SExpressionParser(private val text: String) {
         return when (text[offset]) {
             '(' -> parseList()
             ')' -> null
-            '"' -> parseQuotedAtom()
+            '"' -> if (isEndOfLineStringOpening(offset)) parseEndOfLineString() else parseQuotedAtom()
             else -> parseAtom()
         }
     }
@@ -68,28 +68,68 @@ private class SExpressionParser(private val text: String) {
             val current = text[offset++]
             when {
                 current == '"' -> break
-                current == '\\' && offset < text.length -> {
-                    val escaped = text[offset++]
-                    when (escaped) {
-                        'n' -> value.append('\n')
-                        'r' -> value.append('\r')
-                        'b' -> value.append('\b')
-                        't' -> value.append('\t')
-                        '\n' -> skipContinuationIndent()
-                        '\r' -> {
-                            if (offset < text.length && text[offset] == '\n') offset++
-                            skipContinuationIndent()
-                        }
-                        'x' -> value.append(readHexEscape() ?: 'x')
-                        in '0'..'9' -> value.append(readDecimalEscape(escaped))
-                        else -> value.append(escaped)
-                    }
-                }
+                current == '\\' && offset < text.length -> appendEscapedCharacter(value)
                 else -> value.append(current)
             }
         }
         return SAtom(value.toString())
     }
+
+    private fun parseEndOfLineString(): SAtom {
+        val value = StringBuilder()
+        var continuation = false
+        while (isEndOfLineStringOpening(offset)) {
+            if (continuation) value.append('\n')
+            val interpretEscapes = text[offset + 2] == '|'
+            offset += END_OF_LINE_STRING_PREFIX_LENGTH
+            if (offset < text.length && text[offset] == ' ') offset++
+
+            while (offset < text.length && text[offset] != '\n' && text[offset] != '\r') {
+                val current = text[offset++]
+                if (interpretEscapes && current == '\\' && offset < text.length) {
+                    appendEscapedCharacter(value)
+                } else {
+                    value.append(current)
+                }
+            }
+
+            consumeLineBreak()
+            while (offset < text.length && (text[offset] == ' ' || text[offset] == '\t')) offset++
+            continuation = true
+        }
+        return SAtom(value.toString())
+    }
+
+    private fun appendEscapedCharacter(value: StringBuilder) {
+        val escaped = text[offset++]
+        when (escaped) {
+            'n' -> value.append('\n')
+            'r' -> value.append('\r')
+            'b' -> value.append('\b')
+            't' -> value.append('\t')
+            '\n' -> skipContinuationIndent()
+            '\r' -> {
+                if (offset < text.length && text[offset] == '\n') offset++
+                skipContinuationIndent()
+            }
+            'x' -> value.append(readHexEscape() ?: 'x')
+            in '0'..'9' -> value.append(readDecimalEscape(escaped))
+            else -> value.append(escaped)
+        }
+    }
+
+    private fun consumeLineBreak() {
+        if (offset >= text.length) return
+        val first = text[offset]
+        if (first != '\n' && first != '\r') return
+        offset++
+        if (first == '\r' && offset < text.length && text[offset] == '\n') offset++
+    }
+
+    private fun isEndOfLineStringOpening(startOffset: Int): Boolean =
+        text.getOrNull(startOffset) == '"' &&
+            text.getOrNull(startOffset + 1) == '\\' &&
+            (text.getOrNull(startOffset + 2) == '|' || text.getOrNull(startOffset + 2) == '>')
 
     private fun readDecimalEscape(first: Char): Char {
         var digits = first.toString()
@@ -157,4 +197,8 @@ private class SExpressionParser(private val text: String) {
 
     private fun isAtomDelimiter(character: Char): Boolean =
         character.isWhitespace() || character == '(' || character == ')' || character == ';' || character == '"'
+
+    companion object {
+        private const val END_OF_LINE_STRING_PREFIX_LENGTH = 3
+    }
 }

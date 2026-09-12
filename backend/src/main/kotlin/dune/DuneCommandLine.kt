@@ -1,6 +1,9 @@
 package dev.munormae.dune
 
 import com.intellij.execution.configurations.GeneralCommandLine
+import com.intellij.openapi.project.Project
+import dev.munormae.toolchain.OCamlEnvironmentTool
+import dev.munormae.toolchain.createOCamlEnvironmentCommandLine
 import java.nio.file.Files
 import java.nio.file.Path
 
@@ -42,3 +45,16 @@ internal fun createDuneCommandLine(
         withWorkingDirectory(workingDirectory)
     }
 }
+
+internal fun createDuneCommandLine(
+    project: Project,
+    workingDirectory: Path,
+    arguments: List<String>,
+    executableOverride: String = "",
+): GeneralCommandLine = createOCamlEnvironmentCommandLine(
+    project = project,
+    tool = OCamlEnvironmentTool.DUNE,
+    arguments = arguments,
+    workingDirectory = workingDirectory,
+    executableOverride = executableOverride,
+)

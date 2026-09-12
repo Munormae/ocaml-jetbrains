@@ -11,6 +11,20 @@ class DuneRunConfigurationTest {
     val temporaryFolder = TemporaryFolder()
 
     @Test
+    fun `executable target presentation includes model name and local target`() {
+        assertEquals(
+            "main — ./bin/main.exe",
+            DuneTargetChoice("main", "./bin/main.exe").toString(),
+        )
+    }
+
+    @Test
+    fun `custom Dune executable can satisfy run configuration validation`() {
+        assertEquals(true, isDuneExecutableAvailable(detected = false, customExecutable = "custom-dune"))
+        assertEquals(false, isDuneExecutableAvailable(detected = false, customExecutable = ""))
+    }
+
+    @Test
     fun `build command supports quoted targets and Dune arguments`() {
         assertEquals(
             listOf("build", "--profile", "release", "@check", "target with spaces"),

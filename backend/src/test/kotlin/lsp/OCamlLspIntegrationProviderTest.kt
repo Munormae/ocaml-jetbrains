@@ -12,5 +12,13 @@ class OCamlLspIntegrationProviderTest {
         assertFalse(shouldStartOCamlLsp(lspEnabled = true, trusted = false, extension = "ml"))
         assertFalse(shouldStartOCamlLsp(lspEnabled = false, trusted = true, extension = "ml"))
         assertFalse(shouldStartOCamlLsp(lspEnabled = true, trusted = true, extension = "dune"))
+        assertFalse(
+            shouldStartOCamlLsp(
+                lspEnabled = true,
+                trusted = true,
+                extension = "ml",
+                languageServerAvailable = false,
+            ),
+        )
     }
 }

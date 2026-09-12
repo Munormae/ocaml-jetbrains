@@ -4,6 +4,7 @@ import com.intellij.execution.ExecutionException
 import com.intellij.execution.Executor
 import com.intellij.execution.configurations.CommandLineState
 import com.intellij.execution.configurations.ConfigurationFactory
+import com.intellij.execution.configurations.GeneralCommandLine
 import com.intellij.execution.configurations.RunConfigurationBase
 import com.intellij.execution.configurations.RunConfigurationOptions
 import com.intellij.execution.configurations.RunProfileState
@@ -20,7 +21,8 @@ import com.intellij.util.execution.ParametersListUtil
 import dev.munormae.dune.DuneWatchService
 import dev.munormae.dune.createDuneCommandLine
 import dev.munormae.dune.findDuneRoot
-import dev.munormae.settings.OCamlProjectSettings
+import dev.munormae.toolchain.OCamlToolchainDetectionService
+import dev.munormae.OCamlBundle
 import java.nio.file.Files
 import java.nio.file.InvalidPathException
 import java.nio.file.Path
@@ -30,6 +32,9 @@ class DuneRunConfigurationOptions : RunConfigurationOptions() {
     var duneArguments by string("")
     var programArguments by string("")
     var workingDirectory by string("")
+    var customDuneExecutable by string("")
+    var environmentVariables by map<String, String>()
+    var passParentEnvironment by property(true)
     var managedByPlugin by property(false)
     var modelId by string("")
     var lastGeneratedName by string("")
@@ -73,6 +78,24 @@ class DuneRunConfiguration(
             options.workingDirectory = value
         }
 
+    var customDuneExecutable: String
+        get() = options.customDuneExecutable.orEmpty()
+        set(value) {
+            options.customDuneExecutable = value
+        }
+
+    var environmentVariables: MutableMap<String, String>
+        get() = options.environmentVariables
+        set(value) {
+            options.environmentVariables = value
+        }
+
+    var passParentEnvironment: Boolean
+        get() = options.passParentEnvironment
+        set(value) {
+            options.passParentEnvironment = value
+        }
+
     var managedByPlugin: Boolean
         get() = options.managedByPlugin
         set(value) {
@@ -110,39 +133,49 @@ class DuneRunConfiguration(
         }
 
     override fun getConfigurationEditor(): SettingsEditor<DuneRunConfiguration> =
-        DuneRunConfigurationEditor(command, project.basePath.orEmpty())
+        DuneRunConfigurationEditor(this)
 
     override fun checkConfiguration() {
         if (!TrustedProjects.isProjectTrusted(project)) {
-            throw RuntimeConfigurationError("Dune commands can run only in trusted projects")
+            throw RuntimeConfigurationError(OCamlBundle.message("run.error.untrusted"))
         }
         if (command == DuneCommand.EXEC && target.isBlank()) {
-            throw RuntimeConfigurationError("Specify the executable to run")
+            throw RuntimeConfigurationError(OCamlBundle.message("run.error.executable"))
+        }
+        val detectedDune = OCamlToolchainDetectionService.getInstance(project)
+            .status.selectedEnvironment?.dune?.isAvailable == true
+        if (!isDuneExecutableAvailable(detectedDune, customDuneExecutable)) {
+            throw RuntimeConfigurationError(OCamlBundle.message("run.error.dune.missing"))
         }
 
         val directory = resolveWorkingDirectory(project.basePath, workingDirectory)
         if (!Files.isDirectory(directory)) {
-            throw RuntimeConfigurationError("Working directory does not exist: $directory")
+            throw RuntimeConfigurationError(OCamlBundle.message("run.error.directory.missing", directory))
         }
         if (findDuneRoot(directory.toString()) == null) {
-            throw RuntimeConfigurationError("No dune-project or dune-workspace found at or above $directory")
+            throw RuntimeConfigurationError(OCamlBundle.message("run.error.root.missing", directory))
         }
     }
 
     override fun getState(executor: Executor, environment: ExecutionEnvironment): RunProfileState {
         checkConfiguration()
         val directory = resolveWorkingDirectory(project.basePath, workingDirectory)
-        val settings = OCamlProjectSettings.getInstance(project).state
         val commandLine = createDuneCommandLine(
+            project = project,
             workingDirectory = directory,
-            useOpam = settings.useOpam,
-            opamExecutable = settings.opamExecutable,
-            opamSwitch = settings.opamSwitch,
-            duneExecutable = settings.duneExecutable,
             arguments = buildArguments(command, target, duneArguments, programArguments),
+            executableOverride = customDuneExecutable,
+        )
+        commandLine.withEnvironment(environmentVariables)
+        commandLine.withParentEnvironmentType(
+            if (passParentEnvironment) GeneralCommandLine.ParentEnvironmentType.CONSOLE
+            else GeneralCommandLine.ParentEnvironmentType.NONE,
         )
 
         return object : CommandLineState(environment) {
+            init {
+                addConsoleFilters(DuneConsoleFilter(project, directory))
+            }
             @Throws(ExecutionException::class)
             override fun startProcess(): ProcessHandler {
                 val pauseLease = DuneWatchService.getInstance(project).acquirePause()
@@ -163,19 +196,22 @@ class DuneRunConfiguration(
     }
 }
 
+internal fun isDuneExecutableAvailable(detected: Boolean, customExecutable: String): Boolean =
+    detected || customExecutable.isNotBlank()
+
 internal fun resolveWorkingDirectory(projectBasePath: String?, configuredPath: String): Path {
     val projectDirectory = try {
         projectBasePath?.let(Path::of)?.toAbsolutePath()?.normalize()
     } catch (_: InvalidPathException) {
         null
-    } ?: throw RuntimeConfigurationError("The project has no valid base directory")
+    } ?: throw RuntimeConfigurationError(OCamlBundle.message("run.error.project.directory"))
 
     if (configuredPath.isBlank()) return projectDirectory
 
     val configuredDirectory = try {
         Path.of(configuredPath.trim())
     } catch (_: InvalidPathException) {
-        throw RuntimeConfigurationError("Invalid working directory: $configuredPath")
+        throw RuntimeConfigurationError(OCamlBundle.message("run.error.directory.invalid", configuredPath))
     }
     return if (configuredDirectory.isAbsolute) {
         configuredDirectory.normalize()

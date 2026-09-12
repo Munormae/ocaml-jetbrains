@@ -1,6 +1,8 @@
 package dev.munormae.dune.run
 
 import java.nio.file.Path
+import dev.munormae.dune.model.DuneProjectModel
+import dev.munormae.dune.model.DuneProjectModelState
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -39,5 +41,14 @@ class DuneRunConfigurationProvisioningServiceTest {
         generations.invalidate()
 
         assertFalse(generations.isCurrent(outstanding))
+    }
+
+    @Test
+    fun `ready model is the only state that exposes run configurations`() {
+        val model = DuneProjectModel(Path.of("C:/projects/camel"))
+
+        assertTrue(DuneProjectModelState.Ready(model).runConfigurations.isNotEmpty())
+        assertTrue(DuneProjectModelState.Loading.runConfigurations.isEmpty())
+        assertTrue(DuneProjectModelState.Failed("broken").runConfigurations.isEmpty())
     }
 }

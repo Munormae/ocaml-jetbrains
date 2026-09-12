@@ -3,6 +3,8 @@ dependencies {
         bundledModule("intellij.platform.kernel.backend")
         bundledModule("intellij.platform.backend")
         bundledModule("intellij.platform.execution")
+        bundledModule("intellij.platform.externalSystem")
+        bundledModule("intellij.platform.externalSystem.impl")
         bundledModule("intellij.platform.ide.impl")
         bundledModule("intellij.platform.lang.impl")
         bundledModule("intellij.platform.lsp")
