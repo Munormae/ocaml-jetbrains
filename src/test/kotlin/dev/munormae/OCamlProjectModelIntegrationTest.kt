@@ -1,7 +1,8 @@
 package dev.munormae
 
-import com.intellij.openapi.module.ModuleManager
-import com.intellij.openapi.roots.ModuleRootManager
+import com.intellij.platform.backend.workspace.WorkspaceModel
+import com.intellij.platform.workspace.jps.entities.ModuleEntity
+import com.intellij.platform.workspace.storage.entities
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
 import dev.munormae.project.ensureOCamlModule
 
@@ -15,10 +16,21 @@ class OCamlProjectModelIntegrationTest : BasePlatformTestCase() {
 
         ensureOCamlModule(project, root, "camel")
 
-        val module = ModuleManager.getInstance(project).modules.single { it.name == "camel" }
-        val roots = ModuleRootManager.getInstance(module)
-        assertEquals(listOf(root.url), roots.contentRootUrls.toList())
-        assertContainsElements(roots.sourceRootUrls.toList(), "${root.url}/bin", "${root.url}/test")
-        assertContainsElements(roots.excludeRootUrls.toList(), "${root.url}/_build", "${root.url}/_opam")
+        val module = WorkspaceModel.getInstance(project)
+            .currentSnapshot
+            .entities<ModuleEntity>()
+            .single { it.name == "camel" }
+        val contentRoot = module.contentRoots.single()
+        assertEquals(root.url, contentRoot.url.url)
+        assertContainsElements(
+            contentRoot.sourceRoots.map { it.url.url },
+            "${root.url}/bin",
+            "${root.url}/test",
+        )
+        assertContainsElements(
+            contentRoot.excludedUrls.map { it.url.url },
+            "${root.url}/_build",
+            "${root.url}/_opam",
+        )
     }
 }
