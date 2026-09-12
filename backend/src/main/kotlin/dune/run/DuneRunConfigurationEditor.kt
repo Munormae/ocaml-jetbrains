@@ -101,7 +101,7 @@ internal class DuneRunConfigurationEditor(configuration: DuneRunConfiguration) :
 
     private fun programArgumentsFragment(): SettingsEditorFragment<DuneRunConfiguration, RawCommandLineEditor> {
         val editor = RawCommandLineEditor()
-        return SettingsEditorFragment(
+        return SettingsEditorFragment<DuneRunConfiguration, RawCommandLineEditor>(
             "dune.program.arguments",
             OCamlBundle.message("run.program.arguments"),
             null,
@@ -118,7 +118,7 @@ internal class DuneRunConfigurationEditor(configuration: DuneRunConfiguration) :
 
     private fun duneArgumentsFragment(): SettingsEditorFragment<DuneRunConfiguration, RawCommandLineEditor> {
         val editor = RawCommandLineEditor()
-        return SettingsEditorFragment(
+        return SettingsEditorFragment<DuneRunConfiguration, RawCommandLineEditor>(
             "dune.arguments",
             OCamlBundle.message("run.dune.arguments"),
             OCamlBundle.message("run.modify.options"),
@@ -146,7 +146,7 @@ internal class DuneRunConfigurationEditor(configuration: DuneRunConfiguration) :
             OCamlBundle.message("run.working.directory.label"),
             BorderLayout.WEST,
         )
-        return SettingsEditorFragment(
+        return SettingsEditorFragment<DuneRunConfiguration, LabeledComponent<TextFieldWithBrowseButton>>(
             "dune.working.directory",
             OCamlBundle.message("run.working.directory"),
             null,
@@ -170,7 +170,7 @@ internal class DuneRunConfigurationEditor(configuration: DuneRunConfiguration) :
             OCamlBundle.message("run.dune.executable.label"),
             BorderLayout.WEST,
         )
-        return SettingsEditorFragment(
+        return SettingsEditorFragment<DuneRunConfiguration, LabeledComponent<TextFieldWithBrowseButton>>(
             "dune.executable",
             OCamlBundle.message("run.dune.executable"),
             OCamlBundle.message("run.modify.options"),
@@ -183,7 +183,7 @@ internal class DuneRunConfigurationEditor(configuration: DuneRunConfiguration) :
 
     private fun environmentFragment(): SettingsEditorFragment<DuneRunConfiguration, EnvironmentVariablesComponent> {
         val editor = EnvironmentVariablesComponent(project)
-        return SettingsEditorFragment(
+        return SettingsEditorFragment<DuneRunConfiguration, EnvironmentVariablesComponent>(
             "dune.environment",
             OCamlBundle.message("run.environment"),
             OCamlBundle.message("run.modify.options"),

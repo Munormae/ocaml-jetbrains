@@ -3,7 +3,6 @@ package dev.munormae.settings
 import com.intellij.openapi.options.BoundConfigurable
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.DialogPanel
-import com.intellij.ui.components.JBLabel
 import com.intellij.ui.dsl.builder.bindSelected
 import com.intellij.ui.dsl.builder.panel
 import dev.munormae.OCamlBundle
@@ -12,13 +11,14 @@ import dev.munormae.toolchain.OCamlToolchainSettingsDto
 import dev.munormae.toolchain.OCamlToolchainStatusChangedListener
 import dev.munormae.toolchain.OCamlToolchainStatusService
 import dev.munormae.toolchain.OCamlToolchainStatusSnapshot
+import javax.swing.JLabel
 
 class DuneSettingsConfigurable(private val project: Project) :
     BoundConfigurable(OCamlBundle.message("dune.settings.display.name")) {
 
-    private lateinit var rootLabel: JBLabel
-    private lateinit var statusLabel: JBLabel
-    private lateinit var targetsLabel: JBLabel
+    private lateinit var rootLabel: JLabel
+    private lateinit var statusLabel: JLabel
+    private lateinit var targetsLabel: JLabel
 
     override fun createPanel(): DialogPanel {
         val workspace = OCamlWorkspaceSettings.getInstance(project).state

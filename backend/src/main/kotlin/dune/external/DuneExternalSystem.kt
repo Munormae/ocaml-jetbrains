@@ -3,6 +3,7 @@
 package dev.munormae.dune.external
 
 import com.intellij.execution.configurations.GeneralCommandLine
+import com.intellij.execution.configurations.SimpleJavaParameters
 import com.intellij.execution.process.CapturingProcessHandler
 import com.intellij.execution.process.ProcessOutputType
 import com.intellij.openapi.Disposable
@@ -70,6 +71,7 @@ interface DuneExternalSettingsListener : ExternalSystemSettingsListener<DuneExte
     companion object {
         @JvmField
         val TOPIC: Topic<DuneExternalSettingsListener> = Topic.create(
+            "Dune external settings",
             DuneExternalSettingsListener::class.java,
             Topic.BroadcastDirection.NONE,
         )
@@ -163,6 +165,8 @@ class DuneExternalSystemManager : ExternalSystemManager<
     DuneExternalSystemLocalSettings,
     DuneExternalExecutionSettings,
 >, ExternalSystemUiAware, ExternalSystemAutoImportAware {
+    override fun enhanceRemoteProcessing(parameters: SimpleJavaParameters) = Unit
+
     override fun getSystemId(): ProjectSystemId = DUNE_SYSTEM_ID
 
     override fun getSettingsProvider(): Function<Project, DuneExternalSystemSettings> =

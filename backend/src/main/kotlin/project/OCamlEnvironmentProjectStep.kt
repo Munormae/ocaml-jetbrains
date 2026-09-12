@@ -8,7 +8,6 @@ import com.intellij.openapi.fileChooser.FileChooser
 import com.intellij.openapi.fileChooser.FileChooserDescriptorFactory
 import com.intellij.openapi.observable.util.transform
 import com.intellij.ui.CollectionComboBoxModel
-import com.intellij.ui.components.JBLabel
 import com.intellij.ui.dsl.builder.AlignX
 import com.intellij.ui.dsl.builder.Panel
 import com.intellij.ui.dsl.builder.SegmentedButton
@@ -29,6 +28,7 @@ import dev.munormae.toolchain.environmentCandidate
 import java.util.concurrent.atomic.AtomicLong
 import javax.swing.JButton
 import javax.swing.JComboBox
+import javax.swing.JLabel
 
 internal val WIZARD_PROJECT_TEMPLATES = listOf(
     OCamlProjectTemplate.APPLICATION,
@@ -54,11 +54,11 @@ internal class OCamlEnvironmentProjectStep(parent: NewProjectWizardStep) : Abstr
     private var duneLanguageVersion by duneLanguageVersionProperty
 
     private lateinit var environmentCombo: JComboBox<OCamlEnvironmentDescriptor>
-    private lateinit var compilerStatus: JBLabel
-    private lateinit var duneStatus: JBLabel
-    private lateinit var lspStatus: JBLabel
-    private lateinit var formatterStatus: JBLabel
-    private lateinit var repairStatus: JBLabel
+    private lateinit var compilerStatus: JLabel
+    private lateinit var duneStatus: JLabel
+    private lateinit var lspStatus: JLabel
+    private lateinit var formatterStatus: JLabel
+    private lateinit var repairStatus: JLabel
     private lateinit var installButton: JButton
     private lateinit var createLocalButton: JButton
     private var opamAvailable: Boolean = false

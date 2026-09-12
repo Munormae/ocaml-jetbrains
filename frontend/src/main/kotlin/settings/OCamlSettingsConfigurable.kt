@@ -7,7 +7,6 @@ import com.intellij.openapi.ui.DialogPanel
 import com.intellij.openapi.ui.Messages
 import com.intellij.openapi.ui.TextFieldWithBrowseButton
 import com.intellij.ui.CollectionComboBoxModel
-import com.intellij.ui.components.JBLabel
 import com.intellij.ui.dsl.builder.AlignX
 import com.intellij.ui.dsl.builder.bindSelected
 import com.intellij.ui.dsl.builder.bindText
@@ -25,6 +24,7 @@ import dev.munormae.toolchain.OCamlToolchainStatusService
 import dev.munormae.toolchain.OCamlToolchainStatusSnapshot
 import javax.swing.JButton
 import javax.swing.JComboBox
+import javax.swing.JLabel
 
 class OCamlSettingsConfigurable(private val project: Project) :
     BoundConfigurable(OCamlBundle.message("settings.display.name")) {
@@ -38,12 +38,12 @@ class OCamlSettingsConfigurable(private val project: Project) :
 
     private val environmentModel = CollectionComboBoxModel<OCamlEnvironmentDescriptor>()
     private lateinit var environmentCombo: JComboBox<OCamlEnvironmentDescriptor>
-    private lateinit var compilerStatus: JBLabel
-    private lateinit var duneStatus: JBLabel
-    private lateinit var lspStatus: JBLabel
-    private lateinit var formatterStatus: JBLabel
-    private lateinit var duneProject: JBLabel
-    private lateinit var duneProjectStatus: JBLabel
+    private lateinit var compilerStatus: JLabel
+    private lateinit var duneStatus: JLabel
+    private lateinit var lspStatus: JLabel
+    private lateinit var formatterStatus: JLabel
+    private lateinit var duneProject: JLabel
+    private lateinit var duneProjectStatus: JLabel
     private lateinit var installButton: JButton
     private lateinit var environmentPrefixOverride: TextFieldWithBrowseButton
     private lateinit var opamOverride: TextFieldWithBrowseButton
@@ -275,10 +275,10 @@ class OCamlSettingsConfigurable(private val project: Project) :
 
     private fun updateSelectedEnvironmentPresentation() {
         val environment = environmentCombo.selectedItem as? OCamlEnvironmentDescriptor
-        compilerStatus.text = environment?.compiler.statusText() ?: OCamlBundle.message("settings.environment.empty")
-        lspStatus.text = environment?.languageServer.statusText() ?: OCamlBundle.message("status.not.checked")
-        duneStatus.text = environment?.dune.statusText() ?: OCamlBundle.message("status.not.checked")
-        formatterStatus.text = environment?.formatter.statusText() ?: OCamlBundle.message("status.not.checked")
+        compilerStatus.text = environment?.compiler?.statusText() ?: OCamlBundle.message("settings.environment.empty")
+        lspStatus.text = environment?.languageServer?.statusText() ?: OCamlBundle.message("status.not.checked")
+        duneStatus.text = environment?.dune?.statusText() ?: OCamlBundle.message("status.not.checked")
+        formatterStatus.text = environment?.formatter?.statusText() ?: OCamlBundle.message("status.not.checked")
         installButton.isEnabled = environment?.compiler?.isAvailable == true &&
             environment.canInstallTools &&
             !environment.hasAllTools

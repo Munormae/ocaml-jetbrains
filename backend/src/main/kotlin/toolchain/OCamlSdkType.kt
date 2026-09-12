@@ -5,6 +5,7 @@ import com.intellij.execution.process.CapturingProcessHandler
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.projectRoots.AdditionalDataConfigurable
 import com.intellij.openapi.projectRoots.Sdk
+import com.intellij.openapi.projectRoots.SdkAdditionalData
 import com.intellij.openapi.projectRoots.SdkModel
 import com.intellij.openapi.projectRoots.SdkModificator
 import com.intellij.openapi.projectRoots.SdkType
@@ -15,6 +16,7 @@ import java.io.File
 import java.nio.file.Files
 import java.nio.file.Path
 import javax.swing.Icon
+import org.jdom.Element
 
 class OCamlSdkType : SdkType(NAME) {
     @Deprecated("Use suggestHomePath(Path)")
@@ -46,6 +48,8 @@ class OCamlSdkType : SdkType(NAME) {
         sdkModel: SdkModel,
         sdkModificator: SdkModificator,
     ): AdditionalDataConfigurable? = null
+
+    override fun saveAdditionalData(additionalData: SdkAdditionalData, additional: Element) = Unit
 
     override fun getPresentableName(): String = OCamlBundle.message("environment.sdk.name")
 

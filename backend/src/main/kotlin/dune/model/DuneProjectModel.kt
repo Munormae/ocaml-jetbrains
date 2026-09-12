@@ -124,28 +124,28 @@ internal fun discoverDuneSourceMetadata(root: Path): DuneSourceMetadata {
                                 publicName = form.field("public_name")?.atomValuesAfterHead()?.firstOrNull().orEmpty(),
                                 directory = file.parent,
                             )
-                            sourceRoots += file.parent
+                            sourceRoots.add(file.parent)
                         }
 
                         "test" -> {
                             val name = form.field("name")?.atomValuesAfterHead()?.firstOrNull() ?: continue
                             tests += DuneTarget(DuneTargetKind.TEST, name, directory = file.parent)
-                            sourceRoots += file.parent
+                            sourceRoots.add(file.parent)
                         }
 
                         "tests" -> {
                             form.field("names")?.atomValuesAfterHead().orEmpty().forEach { name ->
                                 tests += DuneTarget(DuneTargetKind.TEST, name, directory = file.parent)
                             }
-                            sourceRoots += file.parent
+                            sourceRoots.add(file.parent)
                         }
 
                         "cram" -> {
                             tests += DuneTarget(DuneTargetKind.TEST, file.parent.fileName.toString(), directory = file.parent)
-                            sourceRoots += file.parent
+                            sourceRoots.add(file.parent)
                         }
 
-                        "executable", "executables" -> sourceRoots += file.parent
+                        "executable", "executables" -> sourceRoots.add(file.parent)
                     }
                 }
                 return FileVisitResult.CONTINUE
