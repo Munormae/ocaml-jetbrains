@@ -154,14 +154,12 @@ fun ensureOCamlModule(
             if (currentContentRoot == null) {
                 storage.addEntity(module)
             } else {
-                val unrelatedSources = currentContentRoot.sourceRoots.filterNot {
-                    it.rootTypeId == SOURCE_ROOT_TYPE || it.rootTypeId == TEST_ROOT_TYPE
-                }
-                val managedExclusions = excludedRoots.map(ExcludeUrlEntity::url).toSet()
-                val unrelatedExclusions = currentContentRoot.excludedUrls.filterNot { it.url in managedExclusions }
+                val managedExclusions = excludedRoots.map { it.url }.toSet()
                 storage.modifyEntity(ContentRootEntityBuilder::class.java, currentContentRoot) {
-                    this.sourceRoots = unrelatedSources + sourceRoots
-                    this.excludedUrls = unrelatedExclusions + excludedRoots
+                    this.sourceRoots = this.sourceRoots.filterNot {
+                        it.rootTypeId == SOURCE_ROOT_TYPE || it.rootTypeId == TEST_ROOT_TYPE
+                    } + sourceRoots
+                    this.excludedUrls = this.excludedUrls.filterNot { it.url in managedExclusions } + excludedRoots
                 }
             }
         }
