@@ -12,10 +12,12 @@ import dev.munormae.OCamlBundle
 import fleet.rpc.client.durable
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.retryWhen
 import kotlinx.coroutines.launch
 
 @Service(Service.Level.PROJECT)
@@ -35,6 +37,11 @@ class OCamlToolchainStatusService(
                 durable {
                     OCamlToolchainRpcApi.getInstance().getStatusFlow(project.projectId()).collect(::emit)
                 }
+            }.retryWhen { cause, attempt ->
+                if (cause is CancellationException) return@retryWhen false
+                update(backendUnavailableStatus())
+                delay(minOf((attempt + 1) * RPC_RETRY_BASE_DELAY_MS, RPC_RETRY_MAX_DELAY_MS))
+                true
             }.collect(::update)
         }
     }
@@ -46,17 +53,7 @@ class OCamlToolchainStatusService(
             } catch (exception: CancellationException) {
                 throw exception
             } catch (_: Exception) {
-                val unavailable = OCamlBundle.message("status.backend.failed")
-                update(
-                    OCamlToolchainStatusSnapshot(
-                        unavailable,
-                        unavailable,
-                        unavailable,
-                        unavailable,
-                        detectionState = OCamlEnvironmentDetectionState.FAILED,
-                        problem = unavailable,
-                    ),
-                )
+                update(backendUnavailableStatus())
             }
         }
     }
@@ -96,6 +93,21 @@ class OCamlToolchainStatusService(
         fun getInstance(project: Project): OCamlToolchainStatusService = project.service()
     }
 }
+
+private fun backendUnavailableStatus(): OCamlToolchainStatusSnapshot {
+    val unavailable = OCamlBundle.message("status.backend.failed")
+    return OCamlToolchainStatusSnapshot(
+        unavailable,
+        unavailable,
+        unavailable,
+        unavailable,
+        detectionState = OCamlEnvironmentDetectionState.FAILED,
+        problem = unavailable,
+    )
+}
+
+private const val RPC_RETRY_BASE_DELAY_MS = 1_000L
+private const val RPC_RETRY_MAX_DELAY_MS = 5_000L
 
 fun interface OCamlToolchainStatusChangedListener {
     fun statusChanged(snapshot: OCamlToolchainStatusSnapshot)
