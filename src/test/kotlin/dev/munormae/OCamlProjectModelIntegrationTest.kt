@@ -1,18 +1,21 @@
 package dev.munormae
 
+import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.platform.backend.workspace.WorkspaceModel
 import com.intellij.platform.workspace.jps.entities.ModuleEntity
 import com.intellij.platform.workspace.storage.entities
-import com.intellij.testFramework.fixtures.BasePlatformTestCase
+import com.intellij.testFramework.HeavyPlatformTestCase
 import dev.munormae.project.ensureOCamlModule
+import java.nio.file.Files
 
-class OCamlProjectModelIntegrationTest : BasePlatformTestCase() {
+class OCamlProjectModelIntegrationTest : HeavyPlatformTestCase() {
     fun testGeneratedProjectReceivesModuleContentSourcesAndExclusions() {
-        val root = myFixture.tempDirFixture.findOrCreateDir("camel")
-        myFixture.tempDirFixture.findOrCreateDir("camel/bin")
-        myFixture.tempDirFixture.findOrCreateDir("camel/test")
-        myFixture.tempDirFixture.findOrCreateDir("camel/_build")
-        myFixture.tempDirFixture.findOrCreateDir("camel/_opam")
+        val rootPath = createTempDir("camel").toPath()
+        Files.createDirectories(rootPath.resolve("bin"))
+        Files.createDirectories(rootPath.resolve("test"))
+        Files.createDirectories(rootPath.resolve("_build"))
+        Files.createDirectories(rootPath.resolve("_opam"))
+        val root = requireNotNull(LocalFileSystem.getInstance().refreshAndFindFileByNioFile(rootPath))
 
         ensureOCamlModule(project, root, "camel")
 
