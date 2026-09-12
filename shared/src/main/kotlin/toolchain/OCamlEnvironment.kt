@@ -6,6 +6,7 @@ import kotlinx.serialization.Serializable
 enum class OCamlEnvironmentKind {
     LOCAL_OPAM_SWITCH,
     OPAM_SWITCH,
+    DUNE_PACKAGE_MANAGEMENT,
     CUSTOM,
     PATH,
 }
@@ -41,13 +42,14 @@ data class OCamlEnvironmentDescriptor(
     val dune: OCamlToolStatus = OCamlToolStatus(),
     val languageServer: OCamlToolStatus = OCamlToolStatus(),
     val formatter: OCamlToolStatus = OCamlToolStatus(),
+    val utop: OCamlToolStatus = OCamlToolStatus(),
     val canInstallTools: Boolean = false,
 ) {
     val isReady: Boolean
         get() = compiler.isAvailable && dune.isAvailable && languageServer.isAvailable
 
     val hasAllTools: Boolean
-        get() = isReady && formatter.isAvailable
+        get() = isReady && formatter.isAvailable && utop.isAvailable
 
     override fun toString(): String = name
 }

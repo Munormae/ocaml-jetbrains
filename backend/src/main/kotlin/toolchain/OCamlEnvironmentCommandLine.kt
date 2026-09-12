@@ -26,18 +26,27 @@ internal fun createOCamlEnvironmentCommandLine(
     val workspace = OCamlWorkspaceSettings.getInstance(project).state
     val environment = OCamlToolchainDetectionService.getInstance(project).resolveSelectedEnvironment()
         ?: throw ExecutionException(OCamlBundle.message("environment.error.not.configured"))
-    val executable = executableOverride.ifBlank { when (tool) {
+    val configuredOverride = executableOverride.ifBlank { when (tool) {
+        OCamlEnvironmentTool.COMPILER -> ""
+        OCamlEnvironmentTool.DUNE -> workspace.duneExecutableOverride.orEmpty()
+        OCamlEnvironmentTool.LANGUAGE_SERVER -> workspace.lspExecutableOverride.orEmpty()
+        OCamlEnvironmentTool.FORMATTER -> workspace.ocamlformatExecutableOverride.orEmpty()
+        OCamlEnvironmentTool.UTOP -> ""
+    } }
+    val executable = configuredOverride.ifBlank { when (tool) {
         OCamlEnvironmentTool.COMPILER -> environment.compiler.executable.ifBlank { tool.executableName }
-        OCamlEnvironmentTool.DUNE -> workspace.duneExecutableOverride.orEmpty().ifBlank {
-            environment.dune.executable.ifBlank { tool.executableName }
+        OCamlEnvironmentTool.DUNE -> environment.dune.executable.ifBlank {
+            tool.executableName
         }
-        OCamlEnvironmentTool.LANGUAGE_SERVER -> workspace.lspExecutableOverride.orEmpty().ifBlank {
-            environment.languageServer.executable.ifBlank { tool.executableName }
+        OCamlEnvironmentTool.LANGUAGE_SERVER -> environment.languageServer.executable.ifBlank {
+            tool.executableName
         }
-        OCamlEnvironmentTool.FORMATTER -> workspace.ocamlformatExecutableOverride.orEmpty().ifBlank {
-            environment.formatter.executable.ifBlank { tool.executableName }
+        OCamlEnvironmentTool.FORMATTER -> environment.formatter.executable.ifBlank {
+            tool.executableName
         }
-        OCamlEnvironmentTool.UTOP -> tool.executableName
+        OCamlEnvironmentTool.UTOP -> environment.utop.executable.ifBlank {
+            tool.executableName
+        }
     } }
     val candidate = OCamlEnvironmentCandidate(
         id = environment.id,
@@ -50,6 +59,11 @@ internal fun createOCamlEnvironmentCommandLine(
         opamExecutable = workspace.opamExecutableOverride.orEmpty().ifBlank { "opam" },
         executable = executable,
         arguments = arguments,
+        duneExecutable = workspace.duneExecutableOverride.orEmpty().ifBlank {
+            environment.dune.executable.ifBlank { "dune" }
+        },
+        duneManagedToolName = tool.executableName,
+        duneManagedExecutableOverride = configuredOverride.isNotBlank(),
     ).apply {
         if (workingDirectory != null) withWorkingDirectory(workingDirectory)
         val toolDirectories = buildList {
@@ -62,6 +76,7 @@ internal fun createOCamlEnvironmentCommandLine(
                     environment.dune.executable,
                     environment.languageServer.executable,
                     environment.formatter.executable,
+                    environment.utop.executable,
                     workspace.lspExecutableOverride.orEmpty(),
                     workspace.duneExecutableOverride.orEmpty(),
                     workspace.ocamlformatExecutableOverride.orEmpty(),

@@ -175,12 +175,45 @@ jobs:
       - name: Run Tests
         run: .\gradlew.bat check
 
+  splitModeSmoke:
+    name: Split Mode Smoke
+    needs: [ build ]
+    runs-on: ubuntu-latest
+    env:
+      HAS_LICENSE_KEY: ${{ secrets.LICENSE_KEY != '' }}
+    steps:
+
+      - name: Require Split Mode license for CI
+        if: env.HAS_LICENSE_KEY != 'true'
+        run: |
+          echo "::error::Split Mode smoke test requires the LICENSE_KEY secret"
+          exit 1
+
+      - name: Fetch Sources
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Java
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+        with:
+          distribution: zulu
+          java-version: 21
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
+        with:
+          cache-read-only: true
+
+      - name: Run Split Mode RPC/UI smoke test
+        env:
+          LICENSE_KEY: ${{ secrets.LICENSE_KEY }}
+        run: ./gradlew testIdeUiSplitMode
+
   # Prepare a draft release for GitHub Releases page for the manual verification
   # If accepted and published, the release workflow would be triggered
   releaseDraft:
     name: Release draft
     if: github.event_name != 'pull_request'
-    needs: [ build, test, windowsTest, verify ]
+    needs: [ build, test, windowsTest, splitModeSmoke, verify ]
     runs-on: ubuntu-latest
     permissions:
       contents: write

@@ -6,8 +6,61 @@ import java.nio.file.Path
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import com.intellij.execution.process.ProcessOutputType
 
 class DuneExternalSystemTest {
+    @Test
+    fun `task output is forwarded before the process finishes`() {
+        val delivered = mutableListOf<Pair<String, Boolean>>()
+        val process = object : DuneExternalTaskProcess {
+            var completed = false
+
+            override fun start(output: (String, ProcessOutputType) -> Unit) {
+                output("compiling main.ml\n", ProcessOutputType.STDOUT)
+                delivered += "observed" to completed
+            }
+
+            override fun waitFor(): Int {
+                completed = true
+                return 0
+            }
+
+            override fun terminateTree() = Unit
+        }
+
+        val output = mutableListOf<String>()
+        val exitCode = executeDuneExternalTaskProcess(process) { text, _ -> output += text }
+
+        assertEquals(0, exitCode)
+        assertEquals(listOf("compiling main.ml\n"), output)
+        assertEquals(listOf("observed" to false), delivered)
+    }
+
+    @Test
+    fun `task cancelled while starting terminates before waiting`() {
+        var cancelled = false
+        val events = mutableListOf<String>()
+        val process = object : DuneExternalTaskProcess {
+            override fun start(output: (String, ProcessOutputType) -> Unit) {
+                events += "start"
+                cancelled = true
+            }
+
+            override fun terminateTree() {
+                events += "terminate"
+            }
+
+            override fun waitFor(): Int {
+                events += "wait"
+                return -1
+            }
+        }
+
+        executeDuneExternalTaskProcess(process, output = { _, _ -> }, cancelled = { cancelled })
+
+        assertEquals(listOf("start", "terminate", "wait"), events)
+    }
+
     @Test
     fun `PATH tasks execute Dune directly`() {
         val command = createDuneExternalTaskCommandLine(
@@ -49,6 +102,43 @@ class DuneExternalSystemTest {
         )
 
         assertTrue(command.parametersList.list.containsAll(listOf("exec", "--switch", "5.3.0", "--", "dune", "build")))
+    }
+
+    @Test
+    fun `Dune package management tasks execute the selected Dune directly`() {
+        val command = createDuneExternalTaskCommandLine(
+            projectPath = ".",
+            taskName = "build",
+            settings = DuneExternalExecutionSettings().apply {
+                environmentKind = OCamlEnvironmentKind.DUNE_PACKAGE_MANAGEMENT.name
+                duneExecutable = "custom-dune"
+            },
+        )
+
+        assertEquals("custom-dune", command.exePath)
+        assertEquals(listOf("build"), command.parametersList.list)
+    }
+
+    @Test
+    fun `managed watch builds use Dune RPC instead of a second build process`() {
+        val command = createDuneExternalTaskCommandLine(
+            projectPath = ".",
+            taskName = "build",
+            settings = DuneExternalExecutionSettings().apply {
+                environmentKind = OCamlEnvironmentKind.PATH.name
+                duneExecutable = "dune"
+                useRpc = true
+            },
+        )
+
+        assertEquals(listOf("rpc", "build", "."), command.parametersList.list)
+    }
+
+    @Test
+    fun `mixed build and test tasks do not use RPC after pausing watch`() {
+        assertEquals(false, useDuneRpcForExternalTasks(true, listOf("build", "test")))
+        assertEquals(true, useDuneRpcForExternalTasks(true, listOf("build")))
+        assertEquals(false, useDuneRpcForExternalTasks(false, listOf("build")))
     }
 
     @Test

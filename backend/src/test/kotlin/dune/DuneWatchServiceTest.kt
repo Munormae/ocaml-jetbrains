@@ -8,6 +8,9 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import java.nio.file.Files
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 
 class DuneWatchServiceTest {
     @get:Rule
@@ -133,6 +136,34 @@ class DuneWatchServiceTest {
                 forceKillTimeoutMillis = 2,
             ),
         )
+    }
+
+    @Test
+    fun `watch coordinator dispatches refresh work asynchronously and serially`() {
+        val executor = Executors.newSingleThreadExecutor()
+        val coordinator = DuneWatchCoordinator(executor)
+        val started = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        val events = mutableListOf<String>()
+
+        try {
+            val first = coordinator.dispatch {
+                started.countDown()
+                release.await(5, TimeUnit.SECONDS)
+                events += "stop-old"
+            }
+            assertTrue(started.await(5, TimeUnit.SECONDS))
+            assertFalse(first.isDone)
+            coordinator.dispatch { events += "start-new" }
+
+            release.countDown()
+            coordinator.dispatchAndWait {}
+
+            assertEquals(listOf("stop-old", "start-new"), events)
+        } finally {
+            release.countDown()
+            coordinator.close()
+        }
     }
 
     private class FakeDuneWatchProcess(waitResults: List<Boolean>) : DuneWatchProcessControl {

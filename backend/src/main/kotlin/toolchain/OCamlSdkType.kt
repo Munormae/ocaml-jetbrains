@@ -19,12 +19,12 @@ import javax.swing.Icon
 import org.jdom.Element
 
 class OCamlSdkType : SdkType(NAME) {
-    @Deprecated("Use suggestHomePath(Path)")
+    @Suppress("OVERRIDE_DEPRECATION")
     override fun suggestHomePath(): String? = System.getenv("OPAM_SWITCH_PREFIX")
 
     override fun suggestHomePath(path: Path): String? {
         val projectSwitch = path.toAbsolutePath().normalize().resolve("_opam")
-        return projectSwitch.takeIf(Files::isDirectory)?.toString() ?: suggestHomePath()
+        return projectSwitch.takeIf(Files::isDirectory)?.toString() ?: System.getenv("OPAM_SWITCH_PREFIX")
     }
 
     override fun isValidSdkHome(path: String): Boolean = compilerAt(path) != null

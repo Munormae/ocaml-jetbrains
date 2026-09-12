@@ -81,7 +81,7 @@ class OCamlSplitModeRpcUiTest {
     }
 
     private companion object {
-        const val TOOL_COUNT = 4
+        const val TOOL_COUNT = 5
         const val BACKEND_CONNECTION_FAILURE = "Unavailable: backend connection failed"
     }
 }

@@ -6,6 +6,7 @@ import com.intellij.ide.trustedProjects.TrustedProjects
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.progress.ProgressManager
+import com.intellij.openapi.progress.ProcessCanceledException
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.Messages
 import com.intellij.openapi.vfs.LocalFileSystem
@@ -21,6 +22,9 @@ import dev.munormae.toolchain.OCamlEnvironmentDescriptor
 import dev.munormae.toolchain.OCamlEnvironmentKind
 import dev.munormae.toolchain.OCamlEnvironmentSdkService
 import dev.munormae.toolchain.discoverOCamlEnvironments
+import dev.munormae.toolchain.createRequiredToolInstallCommandLines
+import dev.munormae.toolchain.OCamlToolAvailability
+import dev.munormae.toolchain.OCamlToolStatus
 import java.nio.file.Files
 import java.nio.file.Path
 import java.util.concurrent.atomic.AtomicReference
@@ -71,7 +75,6 @@ internal class OCamlProjectBootstrapper(private val project: Project) {
             error(OCamlBundle.message("status.blocked"))
         }
         if (request.createLocalEnvironment) createLocalEnvironment(rootPath)
-        if (request.installMissingTools) installRequiredTools(rootPath, request)
 
         ProgressManager.getInstance().progressIndicator?.text = OCamlBundle.message("wizard.progress.files")
         val generatedFiles = createProjectFiles(
@@ -81,6 +84,8 @@ internal class OCamlProjectBootstrapper(private val project: Project) {
             duneLanguageVersion = request.duneLanguageVersion,
         )
         val root = writeProjectFiles(rootPath, generatedFiles)
+
+        if (request.installMissingTools) installRequiredTools(rootPath, request)
 
         ProgressManager.getInstance().progressIndicator?.text = OCamlBundle.message("wizard.progress.module")
         ensureOCamlModule(project, root, request.projectName)
@@ -122,32 +127,52 @@ internal class OCamlProjectBootstrapper(private val project: Project) {
     }
 
     private fun createLocalEnvironment(root: Path) {
-        runOpam(
-            root,
-            listOf("switch", "create", ".", "--yes"),
+        val opam = OCamlWorkspaceSettings.getInstance(project).state.opamExecutableOverride.orEmpty().ifBlank { "opam" }
+        runCommand(
+            GeneralCommandLine(opam)
+                .withParameters("switch", "create", ".", "--yes")
+                .withWorkingDirectory(root),
             BOOTSTRAP_TIMEOUT_MS,
         )
     }
 
     private fun installRequiredTools(root: Path, request: OCamlProjectBootstrapRequest) {
-        val arguments = mutableListOf("install", "--yes")
-        val switch = when {
-            request.createLocalEnvironment -> root.toString()
-            request.environment?.kind in setOf(
-                OCamlEnvironmentKind.LOCAL_OPAM_SWITCH,
-                OCamlEnvironmentKind.OPAM_SWITCH,
-            ) -> request.environment?.switchName.orEmpty()
-            else -> ""
+        val available = OCamlToolStatus(OCamlToolAvailability.AVAILABLE)
+        val environment = if (request.createLocalEnvironment) {
+            OCamlEnvironmentDescriptor(
+                id = "local_opam_switch:${root.toString().replace('\\', '/')}/_opam",
+                name = OCamlBundle.message("environment.kind.local.opam"),
+                kind = OCamlEnvironmentKind.LOCAL_OPAM_SWITCH,
+                switchName = root.toString(),
+                prefix = root.resolve("_opam").toString(),
+                compiler = available,
+                canInstallTools = true,
+            )
+        } else {
+            request.environment ?: error(OCamlBundle.message("wizard.environment.invalid"))
         }
-        if (switch.isNotBlank()) arguments += listOf("--switch", switch)
-        arguments += listOf("dune", "ocaml-lsp-server", "ocamlformat")
-        runOpam(root, arguments, BOOTSTRAP_TIMEOUT_MS)
+        val workspace = OCamlWorkspaceSettings.getInstance(project).state
+        createRequiredToolInstallCommandLines(
+            environment = environment,
+            opamExecutable = workspace.opamExecutableOverride.orEmpty().ifBlank { "opam" },
+            duneExecutable = workspace.duneExecutableOverride.orEmpty().ifBlank {
+                environment.dune.executable.ifBlank { "dune" }
+            },
+            workingDirectory = root,
+        ).forEach { commandLine -> runCommand(commandLine, BOOTSTRAP_TIMEOUT_MS) }
     }
 
-    private fun runOpam(root: Path, arguments: List<String>, timeoutMs: Int) {
-        val output = CapturingProcessHandler(
-            GeneralCommandLine("opam").withParameters(arguments).withWorkingDirectory(root),
-        ).runProcess(timeoutMs)
+    private fun runCommand(commandLine: GeneralCommandLine, timeoutMs: Int) {
+        val handler = BootstrapProcessHandler(commandLine)
+        val indicator = ProgressManager.getInstance().progressIndicator
+        val output = try {
+            if (indicator == null) handler.runProcess(timeoutMs)
+            else handler.runProcessWithProgressIndicator(indicator, timeoutMs)
+        } catch (exception: ProcessCanceledException) {
+            handler.terminateTree()
+            throw exception
+        }
+        if (output.isTimeout) handler.terminateTree()
         if (output.isTimeout || output.exitCode != 0) {
             val detail = sequenceOf(output.stderr, output.stdout)
                 .flatMap(String::lineSequence)
@@ -182,4 +207,20 @@ internal class OCamlProjectBootstrapper(private val project: Project) {
     }
 }
 
+private class BootstrapProcessHandler(commandLine: GeneralCommandLine) : CapturingProcessHandler(commandLine) {
+    fun terminateTree() {
+        val children = runCatching { process.toHandle().descendants().toList() }.getOrDefault(emptyList())
+        if (!isProcessTerminated) {
+            destroyProcess()
+            if (!waitFor(PROCESS_STOP_TIMEOUT_MS)) {
+                killProcessTree(process)
+                waitFor(PROCESS_FORCE_KILL_TIMEOUT_MS)
+            }
+        }
+        children.filter { it.isAlive }.forEach { it.destroyForcibly() }
+    }
+}
+
 private const val BOOTSTRAP_TIMEOUT_MS = 20 * 60 * 1_000
+private const val PROCESS_STOP_TIMEOUT_MS = 5_000L
+private const val PROCESS_FORCE_KILL_TIMEOUT_MS = 2_000L

@@ -58,6 +58,7 @@ internal class OCamlEnvironmentProjectStep(parent: NewProjectWizardStep) : Abstr
     private lateinit var duneStatus: JLabel
     private lateinit var lspStatus: JLabel
     private lateinit var formatterStatus: JLabel
+    private lateinit var utopStatus: JLabel
     private lateinit var repairStatus: JLabel
     private lateinit var installButton: JButton
     private lateinit var createLocalButton: JButton
@@ -97,6 +98,7 @@ internal class OCamlEnvironmentProjectStep(parent: NewProjectWizardStep) : Abstr
             row { duneStatus = label("").component }
             row { lspStatus = label("").component }
             row { formatterStatus = label("").component }
+            row { utopStatus = label("").component }
             row {
                 createLocalButton = button(OCamlBundle.message("wizard.environment.create.local")) {
                     createLocalEnvironment = true
@@ -231,6 +233,7 @@ internal class OCamlEnvironmentProjectStep(parent: NewProjectWizardStep) : Abstr
         duneStatus.text = OCamlBundle.message("wizard.health.dune", selected?.dune.wizardStatus())
         lspStatus.text = OCamlBundle.message("wizard.health.lsp", selected?.languageServer.wizardStatus())
         formatterStatus.text = OCamlBundle.message("wizard.health.formatter", selected?.formatter.wizardStatus())
+        utopStatus.text = OCamlBundle.message("wizard.health.utop", selected?.utop.wizardStatus())
         installButton.isEnabled = selected?.compiler?.isAvailable == true &&
             selected.canInstallTools &&
             !selected.hasAllTools
@@ -252,6 +255,7 @@ internal class OCamlEnvironmentProjectStep(parent: NewProjectWizardStep) : Abstr
         duneStatus.text = detecting
         lspStatus.text = detecting
         formatterStatus.text = detecting
+        utopStatus.text = detecting
     }
 
     private fun OCamlToolStatus?.wizardStatus(): String = when (this?.availability) {

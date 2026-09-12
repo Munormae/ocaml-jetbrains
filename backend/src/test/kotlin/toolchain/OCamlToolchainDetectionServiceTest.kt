@@ -3,12 +3,20 @@ package dev.munormae.toolchain
 import dev.munormae.settings.OCamlWorkspaceSettings
 import java.util.Collections
 import java.util.concurrent.Executors
+import java.nio.file.Files
+import java.nio.file.Path
+import org.junit.Rule
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.junit.rules.TemporaryFolder
 
 class OCamlToolchainDetectionServiceTest {
+    @get:Rule
+    val temporaryFolder = TemporaryFolder()
+
     @Test
     fun `selecting a non-custom environment clears the previous directory override`() {
         val state = OCamlWorkspaceSettings.WorkspaceState().apply {
@@ -93,6 +101,271 @@ class OCamlToolchainDetectionServiceTest {
 
         assertEquals("C:/ocaml/bin/ocamllsp.exe", command.exePath)
         assertEquals(listOf("--version"), command.parametersList.list)
+    }
+
+    @Test
+    fun `Dune package management runs supported developer tools through dune tools`() {
+        val candidate = environmentCandidate(
+            OCamlEnvironmentKind.DUNE_PACKAGE_MANAGEMENT,
+            "",
+            "C:/work/camel",
+        )
+
+        val command = createEnvironmentCommandLine(
+            candidate = candidate,
+            opamExecutable = "opam",
+            executable = "ocamllsp",
+            arguments = listOf("--version"),
+            duneExecutable = "custom-dune",
+        )
+
+        assertEquals("custom-dune", command.exePath)
+        assertEquals(listOf("tools", "exec", "ocamllsp", "--", "--version"), command.parametersList.list)
+    }
+
+    @Test
+    fun `Dune package management runs a Dune override directly`() {
+        val candidate = environmentCandidate(
+            OCamlEnvironmentKind.DUNE_PACKAGE_MANAGEMENT,
+            "",
+            "C:/work/camel",
+        )
+
+        val command = createEnvironmentCommandLine(
+            candidate = candidate,
+            opamExecutable = "opam",
+            executable = "C:/tools/dune.exe",
+            arguments = listOf("build"),
+            duneExecutable = "C:/tools/dune.exe",
+            duneManagedToolName = "dune",
+            duneManagedExecutableOverride = true,
+        )
+
+        assertEquals("C:/tools/dune.exe", command.exePath)
+        assertEquals(listOf("build"), command.parametersList.list)
+    }
+
+    @Test
+    fun `Dune package management keeps an overridden language server inside the project environment`() {
+        val candidate = environmentCandidate(
+            OCamlEnvironmentKind.DUNE_PACKAGE_MANAGEMENT,
+            "",
+            "C:/work/camel",
+        )
+
+        val command = createEnvironmentCommandLine(
+            candidate = candidate,
+            opamExecutable = "opam",
+            executable = "C:/tools/ocamllsp.exe",
+            arguments = listOf("--version"),
+            duneExecutable = "dune",
+            duneManagedToolName = "ocamllsp",
+            duneManagedExecutableOverride = true,
+        )
+
+        assertEquals("dune", command.exePath)
+        assertEquals(listOf("exec", "--", "C:/tools/ocamllsp.exe", "--version"), command.parametersList.list)
+    }
+
+    @Test
+    fun `discovery probes only the selected OPAM switch`() {
+        val root = temporaryFolder.newFolder("lazy-switches").toPath()
+        Files.writeString(root.resolve("dune-project"), "(lang dune 3.0)")
+        val commands = mutableListOf<List<String>>()
+        val result = discoverOCamlEnvironments(
+            settings = EnvironmentDiscoverySettings(environmentId = "opam_switch:5.3.0"),
+            projectBasePath = root.toString(),
+            runner = EnvironmentCommandRunner { command, _ ->
+                val arguments = command.parametersList.list
+                commands += listOf(command.exePath) + arguments
+                when {
+                    arguments == listOf("--version") -> EnvironmentCommandResult(0, "2.4.1")
+                    arguments.take(2) == listOf("switch", "show") -> EnvironmentCommandResult(0, "5.3.0")
+                    arguments.take(2) == listOf("switch", "list") -> EnvironmentCommandResult(
+                        0,
+                        (1..20).joinToString("\n") { "old-$it" } + "\n5.3.0\n",
+                    )
+                    arguments.take(2) == listOf("var", "prefix") -> EnvironmentCommandResult(0, root.toString())
+                    else -> EnvironmentCommandResult(0, "5.3.0")
+                }
+            },
+        )
+
+        assertEquals("opam_switch:5.3.0", result.selectedEnvironmentId)
+        assertTrue(result.environments.any { it.id == "opam_switch:old-20" })
+        assertFalse(commands.any { command -> command.windowed(2).any { it == listOf("--switch", "old-20") } })
+        assertEquals(1, commands.count { it.drop(1).take(2) == listOf("var", "prefix") })
+    }
+
+    @Test
+    fun `Dune package management is hidden when the Dune executable lacks tools support`() {
+        val root = temporaryFolder.newFolder("dune-no-tools").toPath()
+        Files.writeString(root.resolve("dune-project"), "(lang dune 3.0)\n")
+        val duneExecutable = Files.writeString(root.resolve("dune-custom"), "fake dune executable")
+
+        val result = discoverOCamlEnvironments(
+            settings = EnvironmentDiscoverySettings(duneExecutableOverride = duneExecutable.toString()),
+            projectBasePath = root.toString(),
+            runner = EnvironmentCommandRunner { command, _ ->
+                if (command.parametersList.list == listOf("tools", "--help")) {
+                    EnvironmentCommandResult(exitCode = 1, stderr = "unknown command tools")
+                } else {
+                    EnvironmentCommandResult(exitCode = 1, stderr = "not installed")
+                }
+            },
+        )
+
+        assertFalse(result.environments.any { it.kind == OCamlEnvironmentKind.DUNE_PACKAGE_MANAGEMENT })
+    }
+
+    @Test
+    fun `Dune package management is selectable when tools support is available`() {
+        val root = temporaryFolder.newFolder("dune-with-tools").toPath()
+        Files.writeString(root.resolve("dune-project"), "(lang dune 3.0)\n")
+        val duneExecutable = Files.writeString(root.resolve("dune-custom"), "fake dune executable")
+
+        val result = discoverOCamlEnvironments(
+            settings = EnvironmentDiscoverySettings(duneExecutableOverride = duneExecutable.toString()),
+            projectBasePath = root.toString(),
+            runner = EnvironmentCommandRunner { command, _ ->
+                if (command.exePath == "opam") EnvironmentCommandResult(exitCode = 1)
+                else EnvironmentCommandResult(exitCode = 0, stdout = "5.3.0")
+            },
+        )
+
+        val selected = result.environments.single { it.id == result.selectedEnvironmentId }
+        assertEquals(OCamlEnvironmentKind.DUNE_PACKAGE_MANAGEMENT, selected.kind)
+        assertTrue(selected.compiler.isAvailable)
+        assertTrue(selected.utop.isAvailable)
+    }
+
+    @Test
+    fun `UTop participates in complete environment health`() {
+        val available = OCamlToolStatus(OCamlToolAvailability.AVAILABLE)
+        val environment = OCamlEnvironmentDescriptor(
+            id = "path:system",
+            name = "OCaml",
+            kind = OCamlEnvironmentKind.PATH,
+            compiler = available,
+            dune = available,
+            languageServer = available,
+            formatter = available,
+            utop = OCamlToolStatus(OCamlToolAvailability.MISSING),
+        )
+
+        assertTrue(environment.isReady)
+        assertFalse(environment.hasAllTools)
+    }
+
+    @Test
+    fun `tool repair installs UTop in OPAM and Dune package management environments`() {
+        val opamEnvironment = OCamlEnvironmentDescriptor(
+            id = "opam_switch:5.3.0",
+            name = "OCaml",
+            kind = OCamlEnvironmentKind.OPAM_SWITCH,
+            switchName = "5.3.0",
+            canInstallTools = true,
+        )
+        val duneEnvironment = OCamlEnvironmentDescriptor(
+            id = "dune_package_management:C:/work/camel",
+            name = "Dune",
+            kind = OCamlEnvironmentKind.DUNE_PACKAGE_MANAGEMENT,
+            canInstallTools = true,
+        )
+
+        val opamCommands = createRequiredToolInstallCommandLines(
+            opamEnvironment,
+            opamExecutable = "opam",
+            duneExecutable = "dune",
+            workingDirectory = Path.of("."),
+        )
+        val duneCommands = createRequiredToolInstallCommandLines(
+            duneEnvironment,
+            opamExecutable = "opam",
+            duneExecutable = "custom-dune",
+            workingDirectory = Path.of("."),
+        )
+
+        assertEquals(1, opamCommands.size)
+        assertTrue(opamCommands.single().parametersList.list.contains("utop"))
+        assertEquals(
+            listOf(
+                listOf("tools", "install", "ocamllsp"),
+                listOf("tools", "install", "ocamlformat"),
+                listOf("tools", "install", "utop"),
+            ),
+            duneCommands.map { it.parametersList.list },
+        )
+        assertTrue(duneCommands.all { it.exePath == "custom-dune" })
+    }
+
+    @Test
+    fun `LSP runtime key changes for every process-affecting setting`() {
+        val environment = OCamlEnvironmentDescriptor(
+            id = "opam_switch:5.3.0",
+            name = "OCaml",
+            kind = OCamlEnvironmentKind.OPAM_SWITCH,
+            languageServer = OCamlToolStatus(
+                availability = OCamlToolAvailability.AVAILABLE,
+                executable = "ocamllsp",
+            ),
+        )
+        val baseline = createLspRuntimeKey(
+            environment,
+            EnvironmentDiscoverySettings(additionalLspArguments = "--fallback-read-dot-merlin"),
+            inheritedPath = "C:/bin",
+        )
+
+        assertFalse(
+            baseline == createLspRuntimeKey(
+                environment,
+                EnvironmentDiscoverySettings(
+                    opamExecutableOverride = "C:/custom/opam.exe",
+                    additionalLspArguments = "--fallback-read-dot-merlin",
+                ),
+                inheritedPath = "C:/bin",
+            ),
+        )
+
+        assertFalse(
+            baseline == createLspRuntimeKey(
+                environment,
+                EnvironmentDiscoverySettings(lspExecutableOverride = "custom-lsp"),
+                inheritedPath = "C:/bin",
+            ),
+        )
+        assertFalse(
+            baseline == createLspRuntimeKey(
+                environment,
+                EnvironmentDiscoverySettings(additionalLspArguments = "--stdio"),
+                inheritedPath = "C:/bin",
+            ),
+        )
+        assertFalse(
+            baseline == createLspRuntimeKey(
+                environment,
+                EnvironmentDiscoverySettings(additionalLspArguments = "--fallback-read-dot-merlin"),
+                inheritedPath = "D:/tools",
+            ),
+        )
+    }
+
+    @Test
+    fun `environment probe cache invalidates when executable fingerprints change`() {
+        val cache = EnvironmentProbeCache()
+        var probes = 0
+        val descriptor = OCamlEnvironmentDescriptor(
+            id = "path:system",
+            name = "OCaml",
+            kind = OCamlEnvironmentKind.PATH,
+        )
+        val firstKey = EnvironmentProbeCacheKey("path:system", "ocamlc:1", EnvironmentDiscoverySettings())
+
+        cache.getOrProbe(firstKey) { probes++; descriptor }
+        cache.getOrProbe(firstKey) { probes++; descriptor }
+        cache.getOrProbe(firstKey.copy(executableFingerprint = "ocamlc:2")) { probes++; descriptor }
+
+        assertEquals(2, probes)
     }
 
     @Test

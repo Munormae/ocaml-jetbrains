@@ -11,14 +11,18 @@ import com.intellij.ui.RawCommandLineEditor
 import com.intellij.ui.components.JBTextField
 import dev.munormae.OCamlBundle
 import dev.munormae.dune.model.DuneProjectModelService
+import dev.munormae.dune.model.DuneProjectModel
 import dev.munormae.dune.model.DuneProjectModelState
+import dev.munormae.dune.model.DuneWorkspaceModel
 import java.awt.BorderLayout
+import java.nio.file.Path
 import javax.swing.JComboBox
 
 internal class DuneRunConfigurationEditor(configuration: DuneRunConfiguration) :
     RunConfigurationFragmentedEditor<DuneRunConfiguration>(configuration) {
 
     private val command = configuration.command
+    private val initialWorkingDirectory = configuration.workingDirectory
 
     override fun createRunFragments(): List<SettingsEditorFragment<DuneRunConfiguration, *>> = buildList {
         add(targetFragment())
@@ -30,7 +34,9 @@ internal class DuneRunConfigurationEditor(configuration: DuneRunConfiguration) :
     }
 
     private fun targetFragment(): SettingsEditorFragment<DuneRunConfiguration, *> {
-        val model = (DuneProjectModelService.getInstance(project).state as? DuneProjectModelState.Ready)?.model
+        val model = (DuneProjectModelService.getInstance(project).state as? DuneProjectModelState.Ready)
+            ?.workspace
+            ?.let { findDuneRunConfigurationModel(it, initialWorkingDirectory) }
         val targets = when (command) {
             DuneCommand.EXEC -> model?.executables.orEmpty().map { target ->
                 DuneTargetChoice(
@@ -199,6 +205,14 @@ internal class DuneRunConfigurationEditor(configuration: DuneRunConfiguration) :
             { it.environmentVariables.isNotEmpty() || !it.passParentEnvironment },
         ).apply { setCanBeHidden(true) }
     }
+}
+
+internal fun findDuneRunConfigurationModel(
+    workspace: DuneWorkspaceModel,
+    workingDirectory: String,
+): DuneProjectModel? {
+    val root = runCatching { Path.of(workingDirectory).toAbsolutePath().normalize() }.getOrNull()
+    return root?.let(workspace.projects::get) ?: workspace.primaryModel
 }
 
 internal data class DuneTargetChoice(

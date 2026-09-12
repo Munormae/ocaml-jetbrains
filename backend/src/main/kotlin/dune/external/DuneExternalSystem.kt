@@ -4,7 +4,9 @@ package dev.munormae.dune.external
 
 import com.intellij.execution.configurations.GeneralCommandLine
 import com.intellij.execution.configurations.SimpleJavaParameters
-import com.intellij.execution.process.CapturingProcessHandler
+import com.intellij.execution.process.OSProcessHandler
+import com.intellij.execution.process.ProcessEvent
+import com.intellij.execution.process.ProcessListener
 import com.intellij.execution.process.ProcessOutputType
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.components.PersistentStateComponent
@@ -39,13 +41,16 @@ import com.intellij.openapi.project.Project
 import com.intellij.openapi.project.ProjectManager
 import com.intellij.openapi.util.Pair
 import com.intellij.util.Function
+import com.intellij.util.concurrency.AppExecutorUtil
 import com.intellij.util.execution.ParametersListUtil
 import com.intellij.util.messages.Topic
 import com.intellij.util.xmlb.annotations.XCollection
 import dev.munormae.OCamlBundle
 import dev.munormae.dune.DuneWatchService
 import dev.munormae.dune.run.DuneCommand
-import dev.munormae.dune.run.discoverDuneRunConfigurations
+import dev.munormae.dune.model.discoverDuneSourceModel
+import dev.munormae.dune.model.DuneProjectModelService
+import dev.munormae.dune.model.DuneProjectModelState
 import dev.munormae.icons.OCamlIcons
 import dev.munormae.settings.OCamlWorkspaceSettings
 import dev.munormae.toolchain.OCamlEnvironmentKind
@@ -125,6 +130,27 @@ class DuneExternalSystemSettings(project: Project) : AbstractExternalSystemSetti
         return true
     }
 
+    fun synchronizeLinked(workspaceRoot: Path, roots: Collection<Path>): Set<Path> {
+        val normalizedWorkspaceRoot = workspaceRoot.toAbsolutePath().normalize()
+        val normalizedRoots = roots.map { it.toAbsolutePath().normalize() }.distinct()
+        val existingByPath = linkedProjectsSettings.associateBy { it.externalProjectPath }
+        val unrelatedProjects = linkedProjectsSettings.filter { settings ->
+            runCatching { !Path.of(settings.externalProjectPath).toAbsolutePath().normalize().startsWith(normalizedWorkspaceRoot) }
+                .getOrDefault(true)
+        }
+        val desiredPaths = (unrelatedProjects.map { it.externalProjectPath } + normalizedRoots.map(Path::toString)).toSet()
+        if (desiredPaths == existingByPath.keys) return emptySet()
+        val added = normalizedRoots.filter { existingByPath[it.toString()] == null }.toSet()
+        val desired = unrelatedProjects + normalizedRoots.map { root ->
+            existingByPath[root.toString()] ?: DuneExternalProjectSettings().apply {
+                setupNewProjectDefault()
+                externalProjectPath = root.toString()
+            }
+        }
+        setLinkedProjectsSettings(desired)
+        return added
+    }
+
     companion object {
         fun getInstance(project: Project): DuneExternalSystemSettings = project.service()
     }
@@ -156,6 +182,7 @@ class DuneExternalExecutionSettings : ExternalSystemExecutionSettings() {
     var switchName: String = ""
     var opamExecutable: String = "opam"
     var duneExecutable: String = "dune"
+    var useRpc: Boolean = false
 }
 
 class DuneExternalSystemManager : ExternalSystemManager<
@@ -190,6 +217,10 @@ class DuneExternalSystemManager : ExternalSystemManager<
                 duneExecutable = workspace.duneExecutableOverride.orEmpty()
                     .ifBlank { environment?.dune?.executable.orEmpty() }
                     .ifBlank { "dune" }
+                useRpc = runCatching { Path.of(pair.second).toAbsolutePath().normalize() }
+                    .getOrNull()
+                    ?.let { root -> DuneWatchService.getInstance(project).isWatching(root) }
+                    ?: false
             }
         }
 
@@ -238,7 +269,11 @@ class DuneExternalProjectResolver : ExternalSystemProjectResolver<DuneExternalEx
             root.toString(),
         )
         val node = DataNode(ProjectKeys.PROJECT, projectData, null)
-        val configurations = discoverDuneRunConfigurations(root)
+        val openProjectModel = findOpenProject(projectPath)
+            ?.let(DuneProjectModelService::getInstance)
+            ?.state
+            ?.let { state -> (state as? DuneProjectModelState.Ready)?.workspace?.projects?.get(root) }
+        val configurations = (openProjectModel ?: discoverDuneSourceModel(root)).runConfigurations
         val taskNames = buildList {
             add("build")
             add("test")
@@ -261,7 +296,9 @@ class DuneExternalProjectResolver : ExternalSystemProjectResolver<DuneExternalEx
 }
 
 class DuneExternalTaskManager : ExternalSystemTaskManager<DuneExternalExecutionSettings> {
-    private val activeProcesses = ConcurrentHashMap<ExternalSystemTaskId, CapturingProcessHandler>()
+    private val activeProcesses = ConcurrentHashMap<ExternalSystemTaskId, DuneExternalTaskProcess>()
+    private val activeTasks = ConcurrentHashMap.newKeySet<ExternalSystemTaskId>()
+    private val cancelledTasks = ConcurrentHashMap.newKeySet<ExternalSystemTaskId>()
 
     override fun executeTasks(
         projectPath: String,
@@ -269,24 +306,33 @@ class DuneExternalTaskManager : ExternalSystemTaskManager<DuneExternalExecutionS
         settings: DuneExternalExecutionSettings,
         listener: ExternalSystemTaskNotificationListener,
     ) {
-        listener.onStart(projectPath, id)
+        activeTasks.add(id)
         var pauseLease: AutoCloseable? = null
         try {
-            pauseLease = findOpenProject(projectPath)?.let { DuneWatchService.getInstance(it).acquirePause() }
+            listener.onStart(projectPath, id)
             if (!settings.trusted) throw ExternalSystemException(OCamlBundle.message("run.error.untrusted"))
             if (!settings.duneAvailable) {
                 throw ExternalSystemException(OCamlBundle.message("run.error.dune.missing"))
             }
+            val runViaRpc = useDuneRpcForExternalTasks(settings.useRpc, settings.tasks)
+            if (!runViaRpc) {
+                pauseLease = findOpenProject(projectPath)?.let { DuneWatchService.getInstance(it).acquirePause() }
+            }
             for (task in settings.tasks.ifEmpty { listOf("build") }) {
-                val commandLine = createDuneExternalTaskCommandLine(projectPath, task, settings)
-                val handler = CapturingProcessHandler(commandLine)
-                activeProcesses[id] = handler
-                val output = handler.runProcess()
-                if (output.stdout.isNotEmpty()) listener.onTaskOutput(id, output.stdout, ProcessOutputType.STDOUT)
-                if (output.stderr.isNotEmpty()) listener.onTaskOutput(id, output.stderr, ProcessOutputType.STDERR)
-                if (output.exitCode != 0) {
+                if (id in cancelledTasks) throw ExternalSystemException(OCamlBundle.message("dune.external.error.cancelled"))
+                val commandLine = createDuneExternalTaskCommandLine(projectPath, task, settings, runViaRpc)
+                val process = IntellijDuneExternalTaskProcess(commandLine)
+                activeProcesses[id] = process
+                val exitCode = executeDuneExternalTaskProcess(
+                    process,
+                    output = { text, outputType -> listener.onTaskOutput(id, text, outputType) },
+                    cancelled = { id in cancelledTasks },
+                )
+                activeProcesses.remove(id, process)
+                if (id in cancelledTasks) throw ExternalSystemException(OCamlBundle.message("dune.external.error.cancelled"))
+                if (exitCode != 0) {
                     throw ExternalSystemException(
-                        OCamlBundle.message("dune.external.error.exit", task, output.exitCode),
+                        OCamlBundle.message("dune.external.error.exit", task, exitCode),
                     )
                 }
             }
@@ -296,8 +342,13 @@ class DuneExternalTaskManager : ExternalSystemTaskManager<DuneExternalExecutionS
             throw exception
         } finally {
             activeProcesses.remove(id)
-            pauseLease?.close()
-            listener.onEnd(projectPath, id)
+            activeTasks.remove(id)
+            cancelledTasks.remove(id)
+            try {
+                pauseLease?.close()
+            } finally {
+                listener.onEnd(projectPath, id)
+            }
         }
     }
 
@@ -305,35 +356,103 @@ class DuneExternalTaskManager : ExternalSystemTaskManager<DuneExternalExecutionS
         id: ExternalSystemTaskId,
         listener: ExternalSystemTaskNotificationListener,
     ): Boolean {
-        val handler = activeProcesses[id] ?: return false
-        handler.destroyProcess()
+        if (id !in activeTasks) return false
+        cancelledTasks.add(id)
+        activeProcesses[id]?.let { process ->
+            AppExecutorUtil.getAppExecutorService().execute { process.terminateTree() }
+        }
         return true
     }
 }
 
+internal interface DuneExternalTaskProcess {
+    fun start(output: (String, ProcessOutputType) -> Unit)
+    fun waitFor(): Int
+    fun terminateTree()
+}
+
+internal fun executeDuneExternalTaskProcess(
+    process: DuneExternalTaskProcess,
+    output: (String, ProcessOutputType) -> Unit,
+    cancelled: () -> Boolean = { false },
+): Int {
+    process.start(output)
+    if (cancelled()) process.terminateTree()
+    return process.waitFor()
+}
+
+private class IntellijDuneExternalTaskProcess(commandLine: GeneralCommandLine) : DuneExternalTaskProcess {
+    private val handler = TreeKillableProcessHandler(commandLine)
+    private val terminating = java.util.concurrent.atomic.AtomicBoolean()
+
+    override fun start(output: (String, ProcessOutputType) -> Unit) {
+        handler.addProcessListener(object : ProcessListener {
+            override fun onTextAvailable(event: ProcessEvent, outputType: com.intellij.openapi.util.Key<*>) {
+                val externalOutputType = if (outputType === ProcessOutputType.STDERR) {
+                    ProcessOutputType.STDERR
+                } else {
+                    ProcessOutputType.STDOUT
+                }
+                output(event.text, externalOutputType)
+            }
+        })
+        handler.startNotify()
+    }
+
+    override fun waitFor(): Int {
+        handler.waitFor()
+        return handler.exitCode ?: -1
+    }
+
+    override fun terminateTree() {
+        if (!terminating.compareAndSet(false, true)) return
+        val children = runCatching { handler.process.toHandle().descendants().toList() }.getOrDefault(emptyList())
+        if (!handler.isProcessTerminated) {
+            handler.destroyProcess()
+            if (!handler.waitFor(PROCESS_STOP_TIMEOUT_MS)) {
+                handler.forceKillTree()
+                handler.waitFor(PROCESS_FORCE_KILL_TIMEOUT_MS)
+            }
+        }
+        children.filter { it.isAlive }.forEach { it.destroyForcibly() }
+    }
+}
+
+private class TreeKillableProcessHandler(commandLine: GeneralCommandLine) : OSProcessHandler(commandLine) {
+    fun forceKillTree() = killProcessTree(process)
+}
+
 private fun findOpenProject(projectPath: String): Project? {
     val normalized = runCatching { Path.of(projectPath).toAbsolutePath().normalize() }.getOrNull() ?: return null
-    return ProjectManager.getInstance().openProjects.firstOrNull { project ->
-        project.basePath?.let { basePath ->
-            runCatching { Path.of(basePath).toAbsolutePath().normalize() == normalized }.getOrDefault(false)
-        } == true
-    }
+    return ProjectManager.getInstance().openProjects
+        .mapNotNull { project ->
+            val base = project.basePath
+                ?.let { runCatching { Path.of(it).toAbsolutePath().normalize() }.getOrNull() }
+                ?: return@mapNotNull null
+            if (normalized.startsWith(base)) project to base.nameCount else null
+        }
+        .maxByOrNull { it.second }
+        ?.first
 }
 
 internal fun createDuneExternalTaskCommandLine(
     projectPath: String,
     taskName: String,
     settings: DuneExternalExecutionSettings,
+    useRpc: Boolean = settings.useRpc,
 ): GeneralCommandLine {
     val normalizedTask = taskName.trim()
-    val arguments = if (normalizedTask.startsWith("exec ")) {
+    val arguments = if (useRpc && normalizedTask == "build") {
+        listOf("rpc", "build", ".")
+    } else if (normalizedTask.startsWith("exec ")) {
         listOf("exec", normalizedTask.removePrefix("exec ").trim())
     } else {
         ParametersListUtil.parse(normalizedTask)
     }
     val commandLine = if (
         settings.environmentKind == OCamlEnvironmentKind.PATH.name ||
-        settings.environmentKind == OCamlEnvironmentKind.CUSTOM.name
+        settings.environmentKind == OCamlEnvironmentKind.CUSTOM.name ||
+        settings.environmentKind == OCamlEnvironmentKind.DUNE_PACKAGE_MANAGEMENT.name
     ) {
         GeneralCommandLine(settings.duneExecutable)
     } else {
@@ -356,6 +475,9 @@ internal fun createDuneExternalTaskCommandLine(
     return commandLine
 }
 
+internal fun useDuneRpcForExternalTasks(watchAvailable: Boolean, tasks: List<String>): Boolean =
+    watchAvailable && tasks.ifEmpty { listOf("build") }.all { it.trim() == "build" }
+
 private fun duneTaskDescription(task: String): String = when {
     task == "build" -> OCamlBundle.message("dune.external.task.build")
     task == "test" -> OCamlBundle.message("dune.external.task.test")
@@ -364,3 +486,5 @@ private fun duneTaskDescription(task: String): String = when {
 }
 
 private val DUNE_MODEL_FILES = setOf("dune", "dune-project", "dune-workspace")
+private const val PROCESS_STOP_TIMEOUT_MS = 5_000L
+private const val PROCESS_FORCE_KILL_TIMEOUT_MS = 2_000L

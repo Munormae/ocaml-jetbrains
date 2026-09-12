@@ -1,9 +1,22 @@
 package dev.munormae.dune
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Test
 
 class SExpressionTest {
+    @Test
+    fun `parser records source ranges only for live forms`() {
+        val text = "; (executable (name disabled))\n(executables (names server worker))"
+
+        val expressions = parseSExpressions(text)
+        val stanza = expressions.single() as SList
+
+        assertEquals("(executables (names server worker))", text.substring(stanza.range))
+        assertEquals("executables", text.substring((stanza.values.first() as SAtom).range))
+        assertFalse(expressions.any { expression -> text.substring(expression.range).contains("disabled") })
+    }
+
     @Test
     fun `parser handles strings and supported S-expression comment forms`() {
         val expressions = parseSExpressions(

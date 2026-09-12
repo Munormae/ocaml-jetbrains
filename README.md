@@ -4,7 +4,7 @@ OCaml language and Dune project support for IntelliJ IDEA Ultimate 2026.2. The p
 
 ## What the IDE understands
 
-- **OCaml Environment** — a project-local `_opam`, named OPAM switch, explicitly selected prefix, or PATH toolchain with compiler, Dune, OCaml Language Server, and `ocamlformat` health.
+- **OCaml Environment** — a project-local `_opam`, named OPAM switch, Dune Package Management sandbox, explicitly selected prefix, or PATH toolchain with compiler, Dune, OCaml Language Server, `ocamlformat`, and UTop health.
 - **OCaml Module** — a persistent IntelliJ module with a content root, OCaml source/test roots, project SDK, and excluded `_build` and `_opam` directories.
 - **Dune Project** — one reactive model for executables, libraries, tests, packages, source roots, sync status, Run Configurations, and the Dune task tree.
 - **OCaml Language Service** — `ocamllsp` shown through the built-in Language Services widget, including version, lifecycle controls, error output, and an OCaml Settings action.
@@ -17,14 +17,15 @@ Open or create an OCaml project. The plugin automatically checks, in order:
 
 1. a project-local `_opam` switch;
 2. the current and other installed OPAM switches;
-3. tools available on `PATH`.
+3. a Dune Package Management sandbox for a Dune workspace;
+4. tools available on `PATH`.
 
 The wizard also offers **Select existing** for an environment prefix outside OPAM discovery. The normal path requires no executable configuration. Use **Settings | Languages & Frameworks | OCaml** to select an environment, inspect health, install missing tools, or reveal **Executable overrides** for an unusual setup. Machine-specific environment selection and paths are kept in workspace-local state rather than shareable `.idea/ocaml.xml`.
 
 The expected tools are:
 
 ```shell
-opam install ocaml-lsp-server dune ocamlformat
+opam install ocaml-lsp-server dune ocamlformat utop
 ```
 
 If a project has no usable environment, OCaml editors show a native banner with **Configure** and **Create local environment** actions. A missing language server gets an **Install** repair action. Nothing from an untrusted project is executed.
@@ -45,7 +46,9 @@ Opening an existing directory containing `dune-project`, `dune-workspace`, `_opa
 
 ## Dune and execution
 
-The linked Dune project appears as a build system with `build`, `test`, `clean`, and discovered executable tasks. Dune model changes refresh managed Run Configurations while preserving the existing ownership/detachment rules for user-edited configurations.
+Each linked Dune root appears as a build system with `build`, `test`, `clean`, and discovered executable tasks. One incremental workspace snapshot feeds roots, gutter actions, managed Run Configurations, and External System tasks. Build output is streamed live; when managed watch mode is active, build requests use Dune RPC instead of starting a competing build process.
+
+Target metadata still comes from an initial source-file scan plus `dune describe workspace`; subscribing to Dune RPC model/progress events remains future work.
 
 Run editors use the Dune model for executable selection. Program arguments and a browsable working directory remain primary; Dune arguments, a custom Dune executable, and environment variables live under **Modify options**. Compiler locations such as `File "test/foo.ml", line 42` are clickable in the Run console.
 

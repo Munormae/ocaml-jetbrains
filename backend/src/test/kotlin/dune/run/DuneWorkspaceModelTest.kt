@@ -1,7 +1,11 @@
 package dev.munormae.dune.run
 
 import dev.munormae.dune.model.discoverDuneSourceMetadata
+import dev.munormae.dune.model.discoverDuneSourceModel
+import dev.munormae.dune.model.discoverDuneWorkspaceSourceModel
+import dev.munormae.dune.model.DuneWorkspaceSourceIndex
 import dev.munormae.dune.model.duneExecutableModelName
+import dev.munormae.dune.model.rootsNeedingDuneDescribe
 import java.nio.file.Files
 import java.nio.file.Path
 import org.junit.Assert.assertEquals
@@ -34,6 +38,119 @@ class DuneWorkspaceModelTest {
         assertEquals(listOf("parser", "lexer"), metadata.tests.map { it.name })
         assertEquals(listOf("camel"), metadata.packages)
         assertEquals(listOf(root.resolve("lib"), root.resolve("test")), metadata.sourceRoots)
+    }
+
+    @Test
+    fun `one source model load exposes executable and test run configurations`() {
+        val root = temporaryFolder.newFolder("single-source-model").toPath()
+        Files.writeString(root.resolve("dune-project"), "(lang dune 3.0)\n")
+        Files.createDirectories(root.resolve("bin"))
+        Files.writeString(
+            root.resolve("bin/dune"),
+            "(executables (names server worker) (public_names camel-server -))\n(test (name smoke))\n",
+        )
+
+        val model = discoverDuneSourceModel(root)
+
+        assertEquals(listOf("server", "worker"), model.executables.map { it.name })
+        assertEquals(listOf("./bin/server.exe", "./bin/worker.exe"), model.executables.map { it.target })
+        assertEquals(listOf("camel-server", ""), model.executables.map { it.publicName })
+        assertEquals(listOf("smoke"), model.tests.map { it.name })
+        assertEquals(
+            listOf(DuneCommand.BUILD, DuneCommand.EXEC, DuneCommand.EXEC, DuneCommand.TEST),
+            model.runConfigurations.map { it.command },
+        )
+    }
+
+    @Test
+    fun `workspace source model assigns targets to their nearest Dune root`() {
+        val workspace = temporaryFolder.newFolder("multi-root").toPath()
+        Files.writeString(workspace.resolve("dune-project"), "(lang dune 3.0)\n(package (name parent))\n")
+        Files.writeString(workspace.resolve("dune"), "(executable (name parent_app))\n")
+        val child = Files.createDirectories(workspace.resolve("products/child"))
+        Files.writeString(child.resolve("dune-project"), "(lang dune 3.0)\n(package (name child))\n")
+        Files.writeString(child.resolve("dune"), "(executable (name child_app))\n")
+        val ignored = Files.createDirectories(workspace.resolve("_build/generated"))
+        Files.writeString(ignored.resolve("dune-project"), "(lang dune 3.0)\n")
+
+        val model = discoverDuneWorkspaceSourceModel(workspace)
+
+        assertEquals(listOf(workspace.toAbsolutePath().normalize(), child.toAbsolutePath().normalize()), model.roots)
+        assertEquals(listOf("parent_app"), model.projects.getValue(workspace.toAbsolutePath().normalize()).executables.map { it.name })
+        assertEquals(listOf("child_app"), model.projects.getValue(child.toAbsolutePath().normalize()).executables.map { it.name })
+        assertEquals(
+            listOf("child_app"),
+            findDuneRunConfigurationModel(model, child.toString())?.executables?.map { it.name },
+        )
+    }
+
+    @Test
+    fun `nested Dune root does not orphan targets in an implicit parent root`() {
+        val workspace = temporaryFolder.newFolder("implicit-parent").toPath()
+        Files.writeString(workspace.resolve("dune"), "(executable (name parent_app))\n")
+        val child = Files.createDirectories(workspace.resolve("child"))
+        Files.writeString(child.resolve("dune-project"), "(lang dune 3.0)\n")
+        Files.writeString(child.resolve("dune"), "(executable (name child_app))\n")
+
+        val model = discoverDuneWorkspaceSourceModel(workspace)
+
+        assertEquals(listOf(workspace, child), model.roots)
+        assertEquals(listOf("parent_app"), model.projects.getValue(workspace).executables.map { it.name })
+        assertEquals(listOf("child_app"), model.projects.getValue(child).executables.map { it.name })
+    }
+
+    @Test
+    fun `one Dune edit refreshes only its nearest root describe`() {
+        val parent = temporaryFolder.newFolder("describe-parent").toPath()
+        val child = Files.createDirectories(parent.resolve("child"))
+        val roots = listOf(parent, child)
+
+        assertEquals(setOf(child), rootsNeedingDuneDescribe(roots, setOf(child.resolve("lib/dune"))))
+        assertEquals(setOf(parent), rootsNeedingDuneDescribe(roots, setOf(parent.resolve("bin/dune"))))
+        assertEquals(roots.toSet(), rootsNeedingDuneDescribe(roots, setOf(child.resolve("dune-project"))))
+    }
+
+    @Test
+    fun `incremental source index rereads only changed Dune files`() {
+        val root = temporaryFolder.newFolder("incremental-index").toPath()
+        Files.writeString(root.resolve("dune-project"), "(lang dune 3.0)\n")
+        val firstDirectory = Files.createDirectories(root.resolve("first"))
+        val secondDirectory = Files.createDirectories(root.resolve("second"))
+        val first = firstDirectory.resolve("dune")
+        val second = secondDirectory.resolve("dune")
+        Files.writeString(first, "(executable (name first_old))\n")
+        Files.writeString(second, "(executable (name second_old))\n")
+        val index = DuneWorkspaceSourceIndex(root)
+        index.refresh()
+
+        Files.writeString(first, "(executable (name first_new))\n")
+        Files.writeString(second, "(executable (name second_new))\n")
+        val afterSecond = index.refresh(setOf(second))
+
+        assertEquals(
+            listOf("first_old", "second_new"),
+            afterSecond.projects.getValue(root.toAbsolutePath().normalize()).executables.map { it.name },
+        )
+        val afterFirst = index.refresh(setOf(first))
+        assertEquals(
+            listOf("first_new", "second_new"),
+            afterFirst.projects.getValue(root.toAbsolutePath().normalize()).executables.map { it.name },
+        )
+    }
+
+    @Test
+    fun `incremental source index drops stale metadata when a Dune file is deleted`() {
+        val root = temporaryFolder.newFolder("deleted-incremental-index").toPath()
+        Files.writeString(root.resolve("dune-project"), "(lang dune 3.0)\n")
+        val duneFile = root.resolve("dune")
+        Files.writeString(duneFile, "(executable (name old_target))\n")
+        val index = DuneWorkspaceSourceIndex(root)
+        index.refresh()
+
+        Files.delete(duneFile)
+        val model = index.refresh(setOf(duneFile))
+
+        assertEquals(emptyList<String>(), model.projects.getValue(root.toAbsolutePath().normalize()).executables.map { it.name })
     }
 
     @Test

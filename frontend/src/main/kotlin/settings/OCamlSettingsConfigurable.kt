@@ -42,6 +42,7 @@ class OCamlSettingsConfigurable(private val project: Project) :
     private lateinit var duneStatus: JLabel
     private lateinit var lspStatus: JLabel
     private lateinit var formatterStatus: JLabel
+    private lateinit var utopStatus: JLabel
     private lateinit var duneProject: JLabel
     private lateinit var duneProjectStatus: JLabel
     private lateinit var installButton: JButton
@@ -91,6 +92,9 @@ class OCamlSettingsConfigurable(private val project: Project) :
                 }
                 row(OCamlBundle.message("settings.advanced.formatter")) {
                     formatterStatus = label("").component
+                }
+                row(OCamlBundle.message("settings.advanced.utop")) {
+                    utopStatus = label("").component
                 }
             }
 
@@ -220,6 +224,7 @@ class OCamlSettingsConfigurable(private val project: Project) :
                 lspExecutableOverride = lspOverride.text.trim(),
                 duneExecutableOverride = duneOverride.text.trim(),
                 ocamlformatExecutableOverride = formatterOverride.text.trim(),
+                additionalLspArguments = workspaceSettings.state.additionalLspArguments.orEmpty(),
             ),
         )
     }
@@ -279,6 +284,7 @@ class OCamlSettingsConfigurable(private val project: Project) :
         lspStatus.text = environment?.languageServer?.statusText() ?: OCamlBundle.message("status.not.checked")
         duneStatus.text = environment?.dune?.statusText() ?: OCamlBundle.message("status.not.checked")
         formatterStatus.text = environment?.formatter?.statusText() ?: OCamlBundle.message("status.not.checked")
+        utopStatus.text = environment?.utop?.statusText() ?: OCamlBundle.message("status.not.checked")
         installButton.isEnabled = environment?.compiler?.isAvailable == true &&
             environment.canInstallTools &&
             !environment.hasAllTools
@@ -294,6 +300,7 @@ class OCamlSettingsConfigurable(private val project: Project) :
         lspStatus.text = text
         duneStatus.text = text
         formatterStatus.text = text
+        utopStatus.text = text
     }
 
     private fun OCamlToolStatus.statusText(): String = when (availability) {

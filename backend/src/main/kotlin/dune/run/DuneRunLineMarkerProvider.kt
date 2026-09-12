@@ -12,6 +12,7 @@ import com.intellij.openapi.util.TextRange
 import com.intellij.psi.PsiElement
 import dev.munormae.OCamlBundle
 import dev.munormae.dune.findDuneRoot
+import dev.munormae.dune.model.parseDuneFileMetadata
 import java.nio.file.Path
 
 internal data class DuneRunnableTarget(
@@ -23,49 +24,36 @@ internal data class DuneRunnableTarget(
 )
 
 internal fun findDuneRunnableTargets(text: String, duneFile: Path, root: Path): List<DuneRunnableTarget> =
-    DUNE_RUNNABLE_STANZA.findAll(text).mapNotNull { match ->
-        val stanzaEnd = matchingParenthesis(text, match.range.first) ?: return@mapNotNull null
-        val stanza = text.substring(match.range.first, stanzaEnd + 1)
-        val localName = DUNE_NAME.find(stanza)?.groupValues?.get(1) ?: return@mapNotNull null
-        val kind = match.groupValues[1]
-        val relativeDirectory = root.relativize(duneFile.parent).toString().replace('\\', '/')
-        val command = if (kind == "test") DuneCommand.TEST else DuneCommand.EXEC
-        val target = if (command == DuneCommand.EXEC) {
-            if (relativeDirectory.isBlank()) "./$localName.exe" else "./$relativeDirectory/$localName.exe"
-        } else {
-            relativeDirectory.ifBlank { "." }
-        }
-        DuneRunnableTarget(
-            offset = match.range.first + match.value.lastIndexOf(kind),
-            length = kind.length,
-            command = command,
-            name = localName,
-            target = target,
-        )
-    }.toList()
-
-private fun matchingParenthesis(text: String, start: Int): Int? {
-    var depth = 0
-    var inString = false
-    var escaped = false
-    for (index in start until text.length) {
-        val character = text[index]
-        if (inString) {
-            when {
-                escaped -> escaped = false
-                character == '\\' -> escaped = true
-                character == '"' -> inString = false
+    parseDuneFileMetadata(text, root, duneFile).let { metadata ->
+        val relativeDirectory = root.toAbsolutePath().normalize()
+            .relativize(duneFile.toAbsolutePath().normalize().parent)
+            .joinToString("/")
+            .ifBlank { "." }
+        buildList {
+            metadata.executables.forEach { executable ->
+                add(
+                    DuneRunnableTarget(
+                        executable.sourceOffset,
+                        executable.sourceLength,
+                        DuneCommand.EXEC,
+                        executable.name,
+                        executable.target,
+                    ),
+                )
             }
-            continue
-        }
-        when (character) {
-            '"' -> inString = true
-            '(' -> depth++
-            ')' -> if (--depth == 0) return index
+            metadata.tests.forEach { test ->
+                add(
+                    DuneRunnableTarget(
+                        test.sourceOffset,
+                        test.sourceLength,
+                        DuneCommand.TEST,
+                        test.name,
+                        relativeDirectory,
+                    ),
+                )
+            }
         }
     }
-    return null
-}
 
 class DuneRunLineMarkerProvider : LineMarkerProvider {
     override fun getLineMarkerInfo(element: PsiElement): LineMarkerInfo<*>? = null
@@ -118,6 +106,3 @@ class DuneRunLineMarkerProvider : LineMarkerProvider {
         ProgramRunnerUtil.executeConfiguration(settings, DefaultRunExecutor.getRunExecutorInstance())
     }
 }
-
-private val DUNE_RUNNABLE_STANZA = Regex("""\(\s*(executable|test)\b""")
-private val DUNE_NAME = Regex("""\(\s*name\s+([^\s()]+)""")

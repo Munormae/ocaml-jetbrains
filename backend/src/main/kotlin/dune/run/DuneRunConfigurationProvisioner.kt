@@ -8,14 +8,9 @@ import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import dev.munormae.OCamlBundle
 import dev.munormae.dune.DuneWatchService
-import dev.munormae.dune.SList
 import dev.munormae.dune.createDuneCommandLine
-import dev.munormae.dune.parseSExpressions
-import java.nio.file.Files
-import java.nio.file.FileVisitResult
+import dev.munormae.dune.model.discoverDuneSourceModel
 import java.nio.file.Path
-import java.nio.file.SimpleFileVisitor
-import java.nio.file.attribute.BasicFileAttributes
 
 data class DuneRunConfigurationSpec(
     val command: DuneCommand,
@@ -293,62 +288,14 @@ private val RunnerAndConfigurationSettings.duneCommand: DuneCommand?
     get() = (configuration as? DuneRunConfiguration)?.command
 
 internal fun discoverDuneRunConfigurations(duneRoot: Path): List<DuneRunConfigurationSpec> {
-    val normalizedRoot = duneRoot.toAbsolutePath().normalize()
-    val specs = mutableListOf(
-        DuneRunConfigurationSpec(
-            command = DuneCommand.BUILD,
-            name = OCamlBundle.message("run.command.build"),
-            workingDirectory = normalizedRoot.toString(),
-        ),
-    )
-    var hasTests = false
-
-    try {
-        Files.walkFileTree(normalizedRoot, object : SimpleFileVisitor<Path>() {
-            override fun preVisitDirectory(directory: Path, attributes: BasicFileAttributes): FileVisitResult {
-                if (directory != normalizedRoot && directory.fileName.toString() in IGNORED_DIRECTORIES) {
-                    return FileVisitResult.SKIP_SUBTREE
-                }
-                return FileVisitResult.CONTINUE
-            }
-
-            override fun visitFile(file: Path, attributes: BasicFileAttributes): FileVisitResult {
-                if (attributes.isRegularFile && file.fileName.toString() == "dune") {
-                    val forms = parseSExpressions(Files.readString(file)).filterIsInstance<SList>()
-                    for (form in forms) {
-                        when (form.head) {
-                            "executable" -> executableTargets(form, normalizedRoot, file.parent)
-                                .forEach { executable -> specs += execSpec(executable, normalizedRoot) }
-
-                            "executables" -> executableTargets(form, normalizedRoot, file.parent, plural = true)
-                                .forEach { executable -> specs += execSpec(executable, normalizedRoot) }
-
-                            "test", "tests", "cram" -> hasTests = true
-                        }
-                    }
-                }
-                return FileVisitResult.CONTINUE
-            }
-        })
-    } catch (exception: Exception) {
-        LOG.warn("Unable to inspect Dune files below $normalizedRoot", exception)
-    }
-
-    if (hasTests) {
-        specs += DuneRunConfigurationSpec(
-            command = DuneCommand.TEST,
-            name = OCamlBundle.message("run.command.test"),
-            workingDirectory = normalizedRoot.toString(),
-        )
-    }
-    return specs.distinctBy { it.command to it.target }
+    return discoverDuneSourceModel(duneRoot).runConfigurations
 }
 
 internal fun discoverDuneRunConfigurations(
     project: Project,
     duneRoot: Path,
 ): List<DuneRunConfigurationSpec> {
-    val sourceModel = discoverDuneRunConfigurations(duneRoot)
+    val sourceModel = discoverDuneSourceModel(duneRoot).runConfigurations
     val describedExecutables = describeDuneWorkspace(project, duneRoot) ?: return sourceModel
     val sourceExecutables = sourceModel
         .filter { it.command == DuneCommand.EXEC }
@@ -363,7 +310,7 @@ internal fun discoverDuneRunConfigurations(
     }
 }
 
-private fun describeDuneWorkspace(project: Project, duneRoot: Path): List<DuneRunConfigurationSpec>? {
+internal fun describeDuneWorkspace(project: Project, duneRoot: Path): List<DuneRunConfigurationSpec>? {
     val pauseLease = DuneWatchService.getInstance(project).acquirePause()
     return try {
         val commandLine = createDuneCommandLine(
@@ -386,51 +333,5 @@ private fun describeDuneWorkspace(project: Project, duneRoot: Path): List<DuneRu
     }
 }
 
-private fun execSpec(executable: DuneExecutableTarget, root: Path): DuneRunConfigurationSpec =
-    DuneRunConfigurationSpec(
-        command = DuneCommand.EXEC,
-        name = OCamlBundle.message("run.configuration.exec", executable.displayName),
-        target = executable.localTarget,
-        workingDirectory = root.toString(),
-        legacyTarget = executable.publicName.orEmpty(),
-    )
-
-private data class DuneExecutableTarget(
-    val localTarget: String,
-    val displayName: String,
-    val publicName: String?,
-)
-
-private fun executableTargets(
-    form: SList,
-    root: Path,
-    stanzaDirectory: Path,
-    plural: Boolean = false,
-): List<DuneExecutableTarget> {
-    val publicNames = form.field(if (plural) "public_names" else "public_name")
-        ?.atomValuesAfterHead()
-        .orEmpty()
-    val localNames = form.field(if (plural) "names" else "name")
-        ?.atomValuesAfterHead()
-        .orEmpty()
-    return localNames.mapIndexedNotNull { index, localName ->
-        if (localName.contains("%{")) return@mapIndexedNotNull null
-        val publicName = publicNames.getOrNull(index)
-            ?.takeUnless { it == "-" || it.contains("%{") }
-        DuneExecutableTarget(
-            localTarget = localExecutableTarget(root, stanzaDirectory, localName),
-            displayName = publicName ?: localName,
-            publicName = publicName,
-        )
-    }
-}
-
-private fun localExecutableTarget(root: Path, stanzaDirectory: Path, name: String): String {
-    val relativeDirectory = root.relativize(stanzaDirectory).joinToString("/")
-    val prefix = if (relativeDirectory.isEmpty()) "./" else "./$relativeDirectory/"
-    return "$prefix$name.exe"
-}
-
-private val IGNORED_DIRECTORIES = setOf("_build", "_opam", ".git", ".idea")
 private const val DUNE_DESCRIBE_TIMEOUT_MS = 15_000
 private val LOG = Logger.getInstance(DuneRunConfigurationProvisioningActivity::class.java)

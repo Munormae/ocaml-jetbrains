@@ -13,6 +13,7 @@ import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.platform.backend.workspace.WorkspaceModel
 import com.intellij.platform.backend.workspace.toVirtualFileUrl
 import com.intellij.platform.workspace.jps.entities.ContentRootEntity
+import com.intellij.platform.workspace.jps.entities.ContentRootEntityBuilder
 import com.intellij.platform.workspace.jps.entities.ExcludeUrlEntity
 import com.intellij.platform.workspace.jps.entities.InheritedSdkDependency
 import com.intellij.platform.workspace.jps.entities.ModuleEntity
@@ -153,9 +154,14 @@ fun ensureOCamlModule(
             if (currentContentRoot == null) {
                 storage.addEntity(module)
             } else {
-                storage.modifyEntity(ContentRootEntity.Builder::class.java, currentContentRoot) {
-                    this.sourceRoots = (this.sourceRoots + sourceRoots).distinctBy { it.url }
-                    this.excludedUrls = (this.excludedUrls + excludedRoots).distinctBy { it.url }
+                val unrelatedSources = currentContentRoot.sourceRoots.filterNot {
+                    it.rootTypeId == SOURCE_ROOT_TYPE || it.rootTypeId == TEST_ROOT_TYPE
+                }
+                val managedExclusions = excludedRoots.map(ExcludeUrlEntity::url).toSet()
+                val unrelatedExclusions = currentContentRoot.excludedUrls.filterNot { it.url in managedExclusions }
+                storage.modifyEntity(ContentRootEntityBuilder::class.java, currentContentRoot) {
+                    this.sourceRoots = unrelatedSources + sourceRoots
+                    this.excludedUrls = unrelatedExclusions + excludedRoots
                 }
             }
         }
@@ -177,5 +183,5 @@ private val SOURCE_DIRECTORY_NAMES = listOf("lib", "bin", "src")
 private val TEST_DIRECTORY_NAMES = listOf("test", "tests")
 private val EXCLUDED_DIRECTORY_NAMES = listOf("_build", "_opam")
 private val PROJECT_MARKERS = listOf("dune-project", "dune-workspace", "_opam")
-private val SOURCE_ROOT_TYPE = SourceRootTypeId("java-source")
-private val TEST_ROOT_TYPE = SourceRootTypeId("java-test")
+private val SOURCE_ROOT_TYPE = SourceRootTypeId(OCAML_SOURCE_ROOT_TYPE_ID)
+private val TEST_ROOT_TYPE = SourceRootTypeId(OCAML_TEST_ROOT_TYPE_ID)

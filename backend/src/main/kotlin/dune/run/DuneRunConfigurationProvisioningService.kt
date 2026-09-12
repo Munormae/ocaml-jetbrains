@@ -23,9 +23,7 @@ class DuneRunConfigurationProvisioningService(private val project: Project) : Di
         DuneProjectModelService.getInstance(project).requestRefresh(delayMs)
     }
 
-    override fun dispose() {
-        Unit
-    }
+    override fun dispose() = Unit
 
     companion object {
         fun getInstance(project: Project): DuneRunConfigurationProvisioningService = project.service()

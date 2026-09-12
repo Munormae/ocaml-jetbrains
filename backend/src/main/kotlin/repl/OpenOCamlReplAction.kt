@@ -24,6 +24,7 @@ import dev.munormae.dune.findDuneRoot
 import dev.munormae.dune.run.DuneConsoleFilter
 import dev.munormae.lang.OCamlLanguage
 import dev.munormae.toolchain.OCamlEnvironmentTool
+import dev.munormae.toolchain.OCamlEnvironmentDescriptor
 import dev.munormae.toolchain.OCamlToolchainDetectionService
 import dev.munormae.toolchain.createOCamlEnvironmentCommandLine
 import java.nio.file.Path
@@ -38,14 +39,19 @@ class OpenOCamlReplAction : DumbAwareAction(
     override fun update(event: AnActionEvent) {
         val project = event.project
         val root = findDuneRoot(event.getData(CommonDataKeys.VIRTUAL_FILE)?.path ?: project?.basePath)
-        event.presentation.isEnabled = project != null &&
-            root != null &&
-            TrustedProjects.isProjectTrusted(project) &&
-            OCamlToolchainDetectionService.getInstance(project).status.selectedEnvironment?.dune?.isAvailable == true
+        val environment = project?.let { OCamlToolchainDetectionService.getInstance(it).status.selectedEnvironment }
+        event.presentation.isEnabled = canOpenOCamlRepl(
+            trusted = project != null && TrustedProjects.isProjectTrusted(project),
+            hasDuneRoot = root != null,
+            environment = environment,
+        )
     }
 
     override fun actionPerformed(event: AnActionEvent) {
         val project = event.project ?: return
+        if (!TrustedProjects.isProjectTrusted(project)) return
+        val environment = OCamlToolchainDetectionService.getInstance(project).status.selectedEnvironment
+        if (!canOpenOCamlRepl(trusted = true, hasDuneRoot = true, environment = environment)) return
         val contextFile = event.getData(CommonDataKeys.VIRTUAL_FILE)
         val root = findDuneRoot(contextFile?.path ?: project.basePath) ?: return
         val contextDirectory = contextFile?.let { file -> if (file.isDirectory) file else file.parent }
@@ -114,3 +120,12 @@ class OpenOCamlReplAction : DumbAwareAction(
         })
     }
 }
+
+internal fun canOpenOCamlRepl(
+    trusted: Boolean,
+    hasDuneRoot: Boolean,
+    environment: OCamlEnvironmentDescriptor?,
+): Boolean = trusted &&
+    hasDuneRoot &&
+    environment?.dune?.isAvailable == true &&
+    environment.utop.isAvailable

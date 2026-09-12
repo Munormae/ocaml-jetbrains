@@ -11,6 +11,9 @@
 - First-class OCaml environments with local OPAM, named-switch, selected-prefix, and PATH discovery; compiler/tool health; project SDK binding; and explicit install/create repair actions.
 - Persistent OCaml modules and content/source/test/excluded roots through Workspace Model for generated and existing projects.
 - A canonical reactive Dune project model plus linked External System tasks for build, test, clean, and discovered executables.
+- Incremental, multi-root Dune workspace snapshots shared by project roots, gutter actions, Run Configuration provisioning, and External System integration.
+- Dune Package Management environments and first-class UTop discovery, health, installation, and REPL gating.
+- A release-gating Split Mode smoke CI job and a checksum-pinned Gradle distribution.
 - Native Language Services presentation, missing-environment/tool editor banners, `.ml`/`.mli` related-file navigation, Dune gutter run actions, compiler hyperlinks, and an interactive `dune utop` console.
 - A documented Earlybird/DAP compatibility decision and production gates.
 
@@ -23,6 +26,9 @@
 - The New Project Wizard now uses PropertyGraph state, user-facing project types, environment validation/repair, visible Dune package naming, native progress, and a staged project bootstrap.
 - Dune Run Configurations now use a fragmented editor with model-backed executable selection, program arguments, and a browsable working directory, with Dune arguments, environment, and executable overrides under Modify options.
 - Machine-specific toolchain selection and executable overrides now live in workspace-local state instead of shareable project settings.
+- Dune watch supervision now runs on a serial background executor, External System output streams live, managed builds use `dune rpc build`, and cancellation terminates process trees.
+- OPAM switch discovery probes only the selected environment and caches results by executable fingerprints.
+- OCaml project roots now converge to an exact snapshot and use OCaml-specific source/test root types instead of Java root IDs.
 
 ### Fixed
 
@@ -30,6 +36,8 @@
 - OCaml PPX quoted-string shorthand, exact identifier letter ranges, octal character bounds, and line directives are recognized by the fallback lexer.
 - Dune end-of-line strings no longer corrupt syntax highlighting or fallback run-configuration discovery.
 - Replacing, pausing, or disposing Dune Watch now waits for bounded graceful termination and falls back to force kill before continuing.
+- Dune gutter actions ignore commented stanzas and recognize plural executable/test forms and cram tests through the shared S-expression parser.
+- Changing the language-server executable, arguments, environment, or inherited PATH now reliably restarts the LSP process.
 
 ## [0.1.0] - 2026-09-10
 

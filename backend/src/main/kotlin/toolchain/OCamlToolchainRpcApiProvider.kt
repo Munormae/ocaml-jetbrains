@@ -53,10 +53,10 @@ private fun DuneProjectModelState.toSummary(): DuneProjectSummary = when (this) 
     )
     is DuneProjectModelState.Ready -> DuneProjectSummary(
         state = DuneProjectSyncState.READY,
-        root = model.root.toString(),
-        executableCount = model.executables.size,
-        libraryCount = model.libraries.size,
-        testCount = model.tests.size,
+        root = workspace.workspaceRoot.toString(),
+        executableCount = workspace.projects.values.sumOf { it.executables.size },
+        libraryCount = workspace.projects.values.sumOf { it.libraries.size },
+        testCount = workspace.projects.values.sumOf { it.tests.size },
     )
 }
 

@@ -11,78 +11,101 @@ import com.intellij.openapi.components.service
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import com.intellij.util.io.BaseOutputReader
+import com.intellij.util.concurrency.AppExecutorUtil
 import dev.munormae.settings.OCamlProjectSettings
 import dev.munormae.settings.OCamlWorkspaceSettings
 import dev.munormae.toolchain.OCamlToolchainDetectionService
 import java.nio.file.Path
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.Future
 import java.util.concurrent.atomic.AtomicBoolean
-import java.util.concurrent.atomic.AtomicReference
+import java.util.concurrent.ConcurrentHashMap
 
 class DuneWatchService(private val project: Project) : Disposable {
-    private val runningWatch = AtomicReference<RunningWatch?>()
+    private val coordinator = DuneWatchCoordinator(
+        AppExecutorUtil.createBoundedApplicationPoolExecutor("OCaml Dune watch supervisor", 1),
+    )
+    private val disposed = AtomicBoolean()
+    private val runningWatches = ConcurrentHashMap<Path, RunningWatch>()
     private val pauseController = ReferenceCountedPauseController(
         onFirstAcquire = ::pauseWatch,
         onLastRelease = ::resumeWatch,
     )
 
-    @Synchronized
     fun refresh() {
+        if (disposed.get()) return
+        coordinator.dispatch(::refreshOnWorker)
+    }
+
+    private fun refreshOnWorker() {
+        if (disposed.get() || project.isDisposed) {
+            stopAll()
+            return
+        }
         val state = OCamlProjectSettings.getInstance(project).state
         val workspace = OCamlWorkspaceSettings.getInstance(project).state
-        val root = findDuneRoot(project.basePath)
-        if (!state.lspEnabled || !workspace.manageDuneWatch || root == null || !TrustedProjects.isProjectTrusted(project)) {
-            if (!pauseController.isPaused) stop()
+        val roots = (dev.munormae.dune.model.DuneProjectModelService.getInstance(project).state
+            as? dev.munormae.dune.model.DuneProjectModelState.Ready)
+            ?.workspace
+            ?.roots
+            .orEmpty()
+            .ifEmpty { listOfNotNull(findDuneRoot(project.basePath)) }
+        if (!state.lspEnabled || !workspace.manageDuneWatch || roots.isEmpty() || !TrustedProjects.isProjectTrusted(project)) {
+            if (!pauseController.isPaused) stopAll()
             return
         }
         if (OCamlToolchainDetectionService.getInstance(project).status.selectedEnvironment?.dune?.isAvailable != true) {
-            if (!pauseController.isPaused) stop()
+            if (!pauseController.isPaused) stopAll()
             return
         }
         if (pauseController.isPaused) return
 
-        val commandLine = try {
-            createDuneWatchCommandLine(project, root)
-        } catch (exception: ExecutionException) {
-            LOG.debug("Dune watch is waiting for a configured OCaml environment", exception)
-            if (!pauseController.isPaused) stop()
-            return
+        val desired = roots.associateWith { root ->
+            try {
+                createDuneWatchCommandLine(project, root)
+            } catch (exception: ExecutionException) {
+                LOG.debug("Dune watch is waiting for a configured OCaml environment", exception)
+                null
+            }
         }
-        val current = runningWatch.get()
-        if (
-            current != null &&
-            current.root == root &&
-            current.command == commandLine.commandLineString &&
-            !current.handler.isProcessTerminated
-        ) {
-            return
+        runningWatches.keys.filterNot(desired::containsKey).forEach(::stop)
+        for ((root, commandLine) in desired) {
+            if (commandLine == null) {
+                stop(root)
+                continue
+            }
+            val current = runningWatches[root]
+            if (current != null && current.command == commandLine.commandLineString && !current.handler.isProcessTerminated) {
+                continue
+            }
+            if (stop(root)) start(root, commandLine)
         }
-
-        stop()
-        start(root, commandLine)
     }
 
     fun acquirePause(): AutoCloseable = pauseController.acquire()
 
+    fun isWatching(root: Path): Boolean = runningWatches[root.toAbsolutePath().normalize()]
+        ?.handler
+        ?.isProcessTerminated == false
+
     private fun pauseWatch() {
-        val watch = synchronized(this) {
-            runningWatch.getAndSet(null) ?: return
+        if (!disposed.get()) coordinator.dispatchAndWait {
+            if (!stopAll()) throw ExecutionException("Unable to pause all Dune watches")
         }
-        terminateWatch(watch)
     }
 
     private fun resumeWatch() {
         if (!project.isDisposed) refresh()
     }
 
-    @Synchronized
     private fun start(root: Path, commandLine: GeneralCommandLine) {
         try {
             val handler = DuneWatchProcessHandler(commandLine)
             val watch = RunningWatch(root, commandLine.commandLineString, handler)
-            runningWatch.set(watch)
+            runningWatches[root] = watch
             handler.addProcessListener(object : ProcessListener {
                 override fun processTerminated(event: ProcessEvent) {
-                    runningWatch.compareAndSet(watch, null)
+                    runningWatches.remove(root, watch)
                     if (!watch.stopRequested && event.exitCode != 0 && !project.isDisposed) {
                         LOG.warn("Dune watch stopped with exit code ${event.exitCode} in $root")
                     }
@@ -95,11 +118,19 @@ class DuneWatchService(private val project: Project) : Disposable {
         }
     }
 
-    @Synchronized
-    private fun stop() {
-        val watch = runningWatch.getAndSet(null) ?: return
-        terminateWatch(watch)
+    private fun stop(root: Path): Boolean {
+        val watch = runningWatches[root] ?: return true
+        return runCatching {
+            terminateWatch(watch)
+            runningWatches.remove(root, watch)
+            true
+        }.getOrElse { exception ->
+            LOG.warn("Unable to stop Dune watch in $root", exception)
+            false
+        }
     }
+
+    private fun stopAll(): Boolean = runningWatches.keys.toList().map(::stop).all { it }
 
     private fun terminateWatch(watch: RunningWatch) {
         watch.stopRequested = true
@@ -118,9 +149,11 @@ class DuneWatchService(private val project: Project) : Disposable {
     }
 
     override fun dispose() {
-        runCatching(::stop).onFailure { exception ->
+        if (!disposed.compareAndSet(false, true)) return
+        runCatching { coordinator.dispatch { stopAll() } }.onFailure { exception ->
             LOG.warn("Unable to terminate Dune watch while disposing the project", exception)
         }
+        coordinator.close()
     }
 
     private data class RunningWatch(
@@ -136,6 +169,34 @@ class DuneWatchService(private val project: Project) : Disposable {
         private val LOG = Logger.getInstance(DuneWatchService::class.java)
 
         fun getInstance(project: Project): DuneWatchService = project.service()
+    }
+}
+
+internal class DuneWatchCoordinator(private val executor: ExecutorService) : AutoCloseable {
+    private val closed = AtomicBoolean()
+
+    fun dispatch(action: () -> Unit): Future<*> {
+        if (closed.get()) return java.util.concurrent.CompletableFuture.completedFuture(Unit)
+        return try {
+            executor.submit(action)
+        } catch (exception: java.util.concurrent.RejectedExecutionException) {
+            if (closed.get()) java.util.concurrent.CompletableFuture.completedFuture(Unit) else throw exception
+        }
+    }
+
+    fun dispatchAndWait(action: () -> Unit) {
+        try {
+            dispatch(action).get()
+        } catch (exception: java.util.concurrent.ExecutionException) {
+            val cause = exception.cause ?: exception
+            if (cause is RuntimeException) throw cause
+            if (cause is Error) throw cause
+            throw RuntimeException(cause)
+        }
+    }
+
+    override fun close() {
+        if (closed.compareAndSet(false, true)) executor.shutdown()
     }
 }
 

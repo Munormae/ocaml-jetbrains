@@ -9,9 +9,11 @@ import com.intellij.openapi.components.service
 import com.intellij.openapi.progress.ProgressIndicator
 import com.intellij.openapi.progress.ProgressManager
 import com.intellij.openapi.progress.Task
+import com.intellij.openapi.progress.ProcessCanceledException
 import com.intellij.openapi.project.Project
 import com.intellij.ui.EditorNotifications
 import com.intellij.platform.lsp.api.LspClientManager
+import com.intellij.util.execution.ParametersListUtil
 import dev.munormae.dune.DuneWatchService
 import dev.munormae.dune.model.DuneProjectModelService
 import dev.munormae.lsp.OCamlLspIntegrationProvider
@@ -30,8 +32,9 @@ import kotlinx.coroutines.flow.StateFlow
 class OCamlToolchainDetectionService(private val project: Project) : Disposable {
     private val requestedGeneration = AtomicLong()
     private val mutableStatus = MutableStateFlow(OCamlToolchainStatusSnapshot.NOT_CHECKED)
+    private val probeCache = EnvironmentProbeCache()
     @Volatile
-    private var activeEnvironmentId: String = ""
+    private var activeLspRuntimeKey: LspRuntimeKey? = null
     internal val statusFlow: StateFlow<OCamlToolchainStatusSnapshot> = mutableStatus
 
     internal val status: OCamlToolchainStatusSnapshot
@@ -57,14 +60,18 @@ class OCamlToolchainDetectionService(private val project: Project) : Disposable 
 
         AppExecutorUtil.getAppExecutorService().execute {
             val snapshot = runCatching {
-                discoverOCamlEnvironments(settings, project.basePath).toStatusSnapshot()
+                discoverOCamlEnvironments(
+                    settings,
+                    project.basePath,
+                    probeCache = probeCache,
+                ).toStatusSnapshot()
             }.getOrElse { exception ->
                 mutableStatus.value.copy(
                     detectionState = OCamlEnvironmentDetectionState.FAILED,
                     problem = exception.message ?: exception.javaClass.simpleName,
                 )
             }
-            applySnapshot(generation, snapshot)
+            applySnapshot(generation, snapshot, settings)
         }
     }
 
@@ -79,20 +86,7 @@ class OCamlToolchainDetectionService(private val project: Project) : Disposable 
     }
 
     internal fun resolveSelectedEnvironment(): OCamlEnvironmentDescriptor? {
-        mutableStatus.value.selectedEnvironment?.let { return it }
-        val workspace = OCamlWorkspaceSettings.getInstance(project).state
-        val discovered = runCatching {
-            discoverOCamlEnvironments(
-                settings = EnvironmentDiscoverySettings.from(workspace),
-                projectBasePath = project.basePath,
-            )
-        }.getOrNull() ?: return null
-        val selected = discovered.environments.firstOrNull { it.id == discovered.selectedEnvironmentId }
-        if (selected != null) {
-            mutableStatus.value = discovered.toStatusSnapshot()
-            if (workspace.environmentId.isNullOrBlank()) workspace.environmentId = selected.id
-        }
-        return selected
+        return mutableStatus.value.selectedEnvironment
     }
 
     internal fun installRequiredTools(environmentId: String) {
@@ -100,25 +94,30 @@ class OCamlToolchainDetectionService(private val project: Project) : Disposable 
         val environment = mutableStatus.value.environments.firstOrNull { it.id == environmentId } ?: return
         if (!environment.canInstallTools) return
         val workspace = OCamlWorkspaceSettings.getInstance(project).state
-        val commandLine = GeneralCommandLine(workspace.opamExecutableOverride.orEmpty().ifBlank { "opam" }).apply {
-            addParameters("install", "--yes")
-            if (environment.switchName.isNotBlank()) addParameters("--switch", environment.switchName)
-            addParameters("dune", "ocaml-lsp-server", "ocamlformat")
-            project.basePath?.let(::withWorkDirectory)
-        }
+        val workingDirectory = project.basePath?.let { Path.of(it) } ?: return
+        val commandLines = createRequiredToolInstallCommandLines(
+            environment = environment,
+            opamExecutable = workspace.opamExecutableOverride.orEmpty().ifBlank { "opam" },
+            duneExecutable = workspace.duneExecutableOverride.orEmpty().ifBlank {
+                environment.dune.executable.ifBlank { "dune" }
+            },
+            workingDirectory = workingDirectory,
+        )
         ProgressManager.getInstance().run(object : Task.Backgroundable(
             project,
             OCamlBundle.message("environment.progress.installing"),
-            false,
+            true,
         ) {
             override fun run(indicator: ProgressIndicator) {
                 indicator.text = OCamlBundle.message("environment.progress.installing")
-                val result = runEnvironmentOperation(commandLine)
-                if (result.isSuccess) {
+                val failure = commandLines.asSequence()
+                    .map { commandLine -> runEnvironmentOperation(commandLine, indicator) }
+                    .firstOrNull { !it.isSuccess }
+                if (failure == null) {
                     refresh()
                 } else {
                     publishOperationFailure(
-                        OCamlBundle.message("environment.error.install", result.problemDescription()),
+                        OCamlBundle.message("environment.error.install", failure.problemDescription()),
                     )
                 }
             }
@@ -136,11 +135,11 @@ class OCamlToolchainDetectionService(private val project: Project) : Disposable 
         ProgressManager.getInstance().run(object : Task.Backgroundable(
             project,
             OCamlBundle.message("environment.progress.creating.local"),
-            false,
+            true,
         ) {
             override fun run(indicator: ProgressIndicator) {
                 indicator.text = OCamlBundle.message("environment.progress.creating.local")
-                val created = runEnvironmentOperation(create)
+                val created = runEnvironmentOperation(create, indicator)
                 if (!created.isSuccess) {
                     publishOperationFailure(
                         OCamlBundle.message("environment.error.create.local", created.problemDescription()),
@@ -151,10 +150,10 @@ class OCamlToolchainDetectionService(private val project: Project) : Disposable 
                 val install = GeneralCommandLine(opam)
                     .withParameters(
                         "install", "--yes", "--switch", workingDirectory.toString(),
-                        "dune", "ocaml-lsp-server", "ocamlformat",
+                        "dune", "ocaml-lsp-server", "ocamlformat", "utop",
                     )
                     .withWorkingDirectory(workingDirectory)
-                val installed = runEnvironmentOperation(install)
+                val installed = runEnvironmentOperation(install, indicator)
                 if (installed.isSuccess) {
                     refresh()
                 } else {
@@ -166,14 +165,26 @@ class OCamlToolchainDetectionService(private val project: Project) : Disposable 
         })
     }
 
-    private fun runEnvironmentOperation(commandLine: GeneralCommandLine): EnvironmentCommandResult = try {
-        val output = CapturingProcessHandler(commandLine).runProcess(TOOL_INSTALL_TIMEOUT_MS)
+    private fun runEnvironmentOperation(
+        commandLine: GeneralCommandLine,
+        indicator: ProgressIndicator,
+    ): EnvironmentCommandResult = try {
+        val handler = CancellableCapturingProcessHandler(commandLine)
+        val output = try {
+            handler.runProcessWithProgressIndicator(indicator, TOOL_INSTALL_TIMEOUT_MS)
+        } catch (exception: ProcessCanceledException) {
+            handler.terminateTree()
+            throw exception
+        }
+        if (output.isTimeout) handler.terminateTree()
         EnvironmentCommandResult(
             exitCode = output.exitCode,
             stdout = output.stdout,
             stderr = output.stderr,
             timedOut = output.isTimeout,
         )
+    } catch (exception: ProcessCanceledException) {
+        throw exception
     } catch (exception: Exception) {
         EnvironmentCommandResult(
             exitCode = -1,
@@ -191,20 +202,26 @@ class OCamlToolchainDetectionService(private val project: Project) : Disposable 
         }
     }
 
-    private fun applySnapshot(generation: Long, snapshot: OCamlToolchainStatusSnapshot) {
+    private fun applySnapshot(
+        generation: Long,
+        snapshot: OCamlToolchainStatusSnapshot,
+        settings: EnvironmentDiscoverySettings,
+    ) {
         if (project.isDisposed || requestedGeneration.get() != generation) return
         mutableStatus.value = snapshot
         ApplicationManager.getApplication().invokeLater {
-            if (project.isDisposed) return@invokeLater
+            if (project.isDisposed || requestedGeneration.get() != generation) return@invokeLater
             EditorNotifications.getInstance(project).updateAllNotifications()
-            val selectedEnvironmentId = snapshot.selectedEnvironmentId
+            val runtimeKey = snapshot.selectedEnvironment?.let { environment ->
+                createLspRuntimeKey(environment, settings, System.getenv("PATH").orEmpty())
+            }
             val lspClients = LspClientManager.getInstance(project)
-            if (activeEnvironmentId.isNotBlank() && activeEnvironmentId != selectedEnvironmentId) {
+            if (activeLspRuntimeKey != null && activeLspRuntimeKey != runtimeKey) {
                 lspClients.stopAndRestartClientsIfNeeded(OCamlLspIntegrationProvider::class.java)
             } else if (snapshot.selectedEnvironment?.languageServer?.isAvailable == true) {
                 lspClients.startClientsIfNeeded(OCamlLspIntegrationProvider::class.java)
             }
-            activeEnvironmentId = selectedEnvironmentId
+            activeLspRuntimeKey = runtimeKey
             DuneWatchService.getInstance(project).refresh()
             DuneProjectModelService.getInstance(project).requestRefresh(delayMs = 0)
         }
@@ -221,6 +238,77 @@ class OCamlToolchainDetectionService(private val project: Project) : Disposable 
         fun getInstance(project: Project): OCamlToolchainDetectionService = project.service()
     }
 }
+
+internal fun createRequiredToolInstallCommandLines(
+    environment: OCamlEnvironmentDescriptor,
+    opamExecutable: String,
+    duneExecutable: String,
+    workingDirectory: Path,
+): List<GeneralCommandLine> = when (environment.kind) {
+    OCamlEnvironmentKind.DUNE_PACKAGE_MANAGEMENT -> listOf("ocamllsp", "ocamlformat", "utop").map { tool ->
+        GeneralCommandLine(duneExecutable.ifBlank { "dune" })
+            .withParameters("tools", "install", tool)
+            .withWorkingDirectory(workingDirectory)
+    }
+
+    OCamlEnvironmentKind.LOCAL_OPAM_SWITCH,
+    OCamlEnvironmentKind.OPAM_SWITCH -> listOf(
+        GeneralCommandLine(opamExecutable.ifBlank { "opam" }).apply {
+            addParameters("install", "--yes")
+            if (environment.switchName.isNotBlank()) addParameters("--switch", environment.switchName)
+            addParameters("dune", "ocaml-lsp-server", "ocamlformat", "utop")
+            withWorkingDirectory(workingDirectory)
+        },
+    )
+
+    OCamlEnvironmentKind.CUSTOM,
+    OCamlEnvironmentKind.PATH -> emptyList()
+}
+
+private class CancellableCapturingProcessHandler(commandLine: GeneralCommandLine) :
+    CapturingProcessHandler(commandLine) {
+    fun terminateTree() {
+        val children = runCatching { process.toHandle().descendants().toList() }.getOrDefault(emptyList())
+        if (!isProcessTerminated) {
+            destroyProcess()
+            if (!waitFor(PROCESS_STOP_TIMEOUT_MS)) {
+                killProcessTree(process)
+                waitFor(PROCESS_FORCE_KILL_TIMEOUT_MS)
+            }
+        }
+        children.filter { it.isAlive }.forEach { it.destroyForcibly() }
+    }
+}
+
+internal data class LspRuntimeKey(
+    val environmentId: String,
+    val executable: String,
+    val arguments: List<String>,
+    val pathFingerprint: String,
+    val launcher: String = "",
+    val environmentPrefix: String = "",
+)
+
+internal fun createLspRuntimeKey(
+    environment: OCamlEnvironmentDescriptor,
+    settings: EnvironmentDiscoverySettings,
+    inheritedPath: String,
+): LspRuntimeKey = LspRuntimeKey(
+    environmentId = environment.id,
+    executable = settings.lspExecutableOverride.ifBlank {
+        environment.languageServer.executable.ifBlank { "ocamllsp" }
+    },
+    arguments = ParametersListUtil.parse(settings.additionalLspArguments),
+    pathFingerprint = inheritedPath,
+    launcher = when (environment.kind) {
+        OCamlEnvironmentKind.LOCAL_OPAM_SWITCH,
+        OCamlEnvironmentKind.OPAM_SWITCH -> settings.opamExecutableOverride.ifBlank { "opam" }
+        OCamlEnvironmentKind.DUNE_PACKAGE_MANAGEMENT -> settings.duneExecutableOverride.ifBlank { "dune" }
+        OCamlEnvironmentKind.CUSTOM,
+        OCamlEnvironmentKind.PATH -> ""
+    },
+    environmentPrefix = environment.prefix,
+)
 
 internal fun updateEnvironmentSelection(
     workspace: OCamlWorkspaceSettings.WorkspaceState,
@@ -463,4 +551,6 @@ internal fun findExecutableOnPath(executable: String): Path? {
 internal const val DEFAULT_DUNE_LANGUAGE_VERSION = "3.0"
 private const val TOOL_PROBE_TIMEOUT_MS = 5_000
 private const val TOOL_INSTALL_TIMEOUT_MS = 10 * 60 * 1_000
+private const val PROCESS_STOP_TIMEOUT_MS = 5_000L
+private const val PROCESS_FORCE_KILL_TIMEOUT_MS = 2_000L
 private val DUNE_VERSION = Regex("""\b(\d+)\.(\d+)(?:\.\d+)?""")

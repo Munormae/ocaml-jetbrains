@@ -43,6 +43,7 @@ data class OCamlToolchainSettingsDto(
     val lspExecutableOverride: String = "",
     val duneExecutableOverride: String = "",
     val ocamlformatExecutableOverride: String = "",
+    val additionalLspArguments: String = "",
 )
 
 @Rpc

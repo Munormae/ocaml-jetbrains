@@ -1,10 +1,18 @@
 package dev.munormae.dune
 
-internal sealed interface SExpression
+internal sealed interface SExpression {
+    val range: IntRange
+}
 
-internal data class SAtom(val value: String) : SExpression
+internal data class SAtom(
+    val value: String,
+    override val range: IntRange = IntRange.EMPTY,
+) : SExpression
 
-internal data class SList(val values: List<SExpression>) : SExpression {
+internal data class SList(
+    val values: List<SExpression>,
+    override val range: IntRange = IntRange.EMPTY,
+) : SExpression {
     val head: String?
         get() = (values.firstOrNull() as? SAtom)?.value
 
@@ -17,6 +25,13 @@ internal data class SList(val values: List<SExpression>) : SExpression {
         when (expression) {
             is SAtom -> listOf(expression.value)
             is SList -> expression.values.filterIsInstance<SAtom>().map(SAtom::value)
+        }
+    }
+
+    fun atomsAfterHead(): List<SAtom> = values.drop(1).flatMap { expression ->
+        when (expression) {
+            is SAtom -> listOf(expression)
+            is SList -> expression.values.filterIsInstance<SAtom>()
         }
     }
 }
@@ -46,6 +61,7 @@ private class SExpressionParser(private val text: String) {
     }
 
     private fun parseList(): SList {
+        val start = offset
         offset++
         val values = buildList {
             while (offset < text.length) {
@@ -58,10 +74,11 @@ private class SExpressionParser(private val text: String) {
                 parseExpression()?.let(::add) ?: offset++
             }
         }
-        return SList(values)
+        return SList(values, start until offset)
     }
 
     private fun parseQuotedAtom(): SAtom {
+        val start = offset
         offset++
         val value = StringBuilder()
         while (offset < text.length) {
@@ -72,10 +89,11 @@ private class SExpressionParser(private val text: String) {
                 else -> value.append(current)
             }
         }
-        return SAtom(value.toString())
+        return SAtom(value.toString(), start until offset)
     }
 
     private fun parseEndOfLineString(): SAtom {
+        val start = offset
         val value = StringBuilder()
         var continuation = false
         while (isEndOfLineStringOpening(offset)) {
@@ -97,7 +115,7 @@ private class SExpressionParser(private val text: String) {
             while (offset < text.length && (text[offset] == ' ' || text[offset] == '\t')) offset++
             continuation = true
         }
-        return SAtom(value.toString())
+        return SAtom(value.toString(), start until offset)
     }
 
     private fun appendEscapedCharacter(value: StringBuilder) {
@@ -154,7 +172,7 @@ private class SExpressionParser(private val text: String) {
     private fun parseAtom(): SAtom {
         val start = offset
         while (offset < text.length && !isAtomDelimiter(text[offset])) offset++
-        return SAtom(text.substring(start, offset))
+        return SAtom(text.substring(start, offset), start until offset)
     }
 
     private fun skipTrivia() {
