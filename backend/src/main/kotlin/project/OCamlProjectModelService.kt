@@ -23,6 +23,7 @@ import com.intellij.platform.workspace.storage.entities
 import com.intellij.workspaceModel.ide.legacyBridge.LegacyBridgeJpsEntitySourceFactory
 import java.nio.file.Files
 import java.nio.file.Path
+import org.jetbrains.annotations.ApiStatus
 
 internal data class OCamlProjectLayout(
     val root: Path,
@@ -81,7 +82,8 @@ class OCamlProjectModelService(private val project: Project) {
     }
 }
 
-internal fun ensureOCamlModule(
+@ApiStatus.Internal
+fun ensureOCamlModule(
     project: Project,
     root: VirtualFile,
     requestedName: String,

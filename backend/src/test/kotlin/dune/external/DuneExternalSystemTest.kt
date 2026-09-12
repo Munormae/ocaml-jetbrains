@@ -53,17 +53,18 @@ class DuneExternalSystemTest {
 
     @Test
     fun `selected directory tasks prepend the environment bin directory to PATH`() {
+        val prefix = Path.of("ocaml-environment").toAbsolutePath().normalize()
         val command = createDuneExternalTaskCommandLine(
             projectPath = ".",
             taskName = "build",
             settings = DuneExternalExecutionSettings().apply {
                 environmentKind = OCamlEnvironmentKind.CUSTOM.name
-                environmentPrefix = "C:/ocaml"
-                duneExecutable = "C:/ocaml/bin/dune.exe"
+                environmentPrefix = prefix.toString()
+                duneExecutable = prefix.resolve("bin/dune").toString()
             },
         )
 
-        val expectedBin = Path.of("C:/ocaml", "bin").toString()
+        val expectedBin = prefix.resolve("bin").toString()
         assertEquals(expectedBin, command.environment.getValue("PATH").split(File.pathSeparator).first())
     }
 }

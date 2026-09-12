@@ -19,7 +19,7 @@ class OCamlToolchainDetectionServiceTest {
         updateEnvironmentSelection(state, "opam_switch:5.3.0", "")
 
         assertEquals("opam_switch:5.3.0", state.environmentId)
-        assertEquals("", state.environmentPrefixOverride)
+        assertEquals("", state.environmentPrefixOverride.orEmpty())
     }
 
     @Test
