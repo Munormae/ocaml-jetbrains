@@ -92,8 +92,19 @@ fun ensureOCamlModule(
     val workspaceModel = WorkspaceModel.getInstance(project)
     val urlManager = workspaceModel.getVirtualFileUrlManager()
     val rootUrl = root.toVirtualFileUrl(urlManager)
-    val layout = deriveOCamlProjectLayout(Path.of(root.path))
-    if (!layout.isOCamlProject && layout.sourceRoots.isEmpty() && layout.testRoots.isEmpty()) return
+    val virtualSourceRoots = SOURCE_DIRECTORY_NAMES
+        .mapNotNull(root::findChild)
+        .filter { it.isDirectory }
+    val virtualTestRoots = TEST_DIRECTORY_NAMES
+        .mapNotNull(root::findChild)
+        .filter { it.isDirectory }
+    val hasTopLevelSource = root.children.any { file ->
+        !file.isDirectory && (file.extension == "ml" || file.extension == "mli")
+    }
+    val hasProjectMarker = PROJECT_MARKERS.any { root.findChild(it) != null }
+    if (!hasProjectMarker && !hasTopLevelSource && virtualSourceRoots.isEmpty() &&
+        virtualTestRoots.isEmpty() && additionalSourceRoots.isEmpty()
+    ) return
     val usedNames = workspaceModel.currentSnapshot.entities<ModuleEntity>().mapTo(mutableSetOf()) { it.name }
     val moduleName = uniqueModuleName(requestedName.ifBlank { root.name }, usedNames)
     val existingModule = workspaceModel.currentSnapshot.entities<ModuleEntity>().firstOrNull { module ->
@@ -104,23 +115,25 @@ fun ensureOCamlModule(
 
     fun pathUrl(path: Path) = urlManager.getOrCreateFromUrl(VfsUtilCore.pathToUrl(path.toString()))
 
-    val normalizedTestRoots = layout.testRoots
-        .map(Path::toAbsolutePath)
-        .map(Path::normalize)
-        .toSet()
-    val sourceRoots = (layout.sourceRoots + additionalSourceRoots)
+    val testRootUrls = virtualTestRoots.map { it.toVirtualFileUrl(urlManager) }
+    val virtualSourceRootUrls = virtualSourceRoots
+        .map { it.toVirtualFileUrl(urlManager) }
+        .ifEmpty { if (hasTopLevelSource) listOf(rootUrl) else emptyList() }
+    val additionalSourceRootUrls = additionalSourceRoots
         .map(Path::toAbsolutePath)
         .map(Path::normalize)
         .distinct()
-        .filterNot(normalizedTestRoots::contains)
         .filter(Files::isDirectory)
-        .map { sourceRoot ->
-            SourceRootEntity(pathUrl(sourceRoot), SOURCE_ROOT_TYPE, entitySource)
-        } + normalizedTestRoots.map { testRoot ->
-        SourceRootEntity(pathUrl(testRoot), TEST_ROOT_TYPE, entitySource)
-    }
-    val excludedRoots = layout.excludedRoots.map { excludedRoot ->
-        ExcludeUrlEntity(pathUrl(excludedRoot), entitySource)
+        .map(::pathUrl)
+        .filterNot(testRootUrls::contains)
+    val sourceRoots = (virtualSourceRootUrls + additionalSourceRootUrls)
+        .distinct()
+        .map { sourceRootUrl -> SourceRootEntity(sourceRootUrl, SOURCE_ROOT_TYPE, entitySource) } +
+        testRootUrls.map { testRootUrl -> SourceRootEntity(testRootUrl, TEST_ROOT_TYPE, entitySource) }
+    val excludedRoots = EXCLUDED_DIRECTORY_NAMES.map { excludedRootName ->
+        val excludedUrl = root.findChild(excludedRootName)?.toVirtualFileUrl(urlManager)
+            ?: urlManager.getOrCreateFromUrl("${root.url}/$excludedRootName")
+        ExcludeUrlEntity(excludedUrl, entitySource)
     }
     val contentRoot = ContentRootEntity(rootUrl, emptyList(), entitySource) {
         this.sourceRoots = sourceRoots
