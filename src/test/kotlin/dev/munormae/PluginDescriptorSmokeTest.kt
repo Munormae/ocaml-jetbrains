@@ -45,8 +45,8 @@ class PluginDescriptorSmokeTest {
             "The module creation action must declare its IntelliJ language implementation dependency",
             "intellij.platform.lang.impl" in moduleNames,
         )
-        assertTrue(
-            "Dune Run Configurations and REPL must declare the IntelliJ execution module",
+        assertFalse(
+            "The product-owned execution module is internal and must not be declared by a third-party plugin",
             "intellij.platform.execution" in moduleNames,
         )
         assertTrue(
