@@ -35,6 +35,8 @@ class OCamlToolchainDetectionService(private val project: Project) : Disposable 
     private val probeCache = EnvironmentProbeCache()
     @Volatile
     private var activeLspRuntimeKey: LspRuntimeKey? = null
+    @Volatile
+    private var activeLspAvailable = false
     internal val statusFlow: StateFlow<OCamlToolchainStatusSnapshot> = mutableStatus
 
     internal val status: OCamlToolchainStatusSnapshot
@@ -216,12 +218,16 @@ class OCamlToolchainDetectionService(private val project: Project) : Disposable 
                 createLspRuntimeKey(environment, settings, System.getenv("PATH").orEmpty())
             }
             val lspClients = LspClientManager.getInstance(project)
-            if (activeLspRuntimeKey != null && activeLspRuntimeKey != runtimeKey) {
-                lspClients.stopAndRestartClientsIfNeeded(OCamlLspIntegrationProvider::class.java)
-            } else if (snapshot.selectedEnvironment?.languageServer?.isAvailable == true) {
-                lspClients.startClientsIfNeeded(OCamlLspIntegrationProvider::class.java)
+            val lspAvailable = snapshot.selectedEnvironment?.languageServer?.isAvailable == true
+            when (lspClientLifecycleAction(activeLspRuntimeKey, activeLspAvailable, runtimeKey, lspAvailable)) {
+                LspClientLifecycleAction.STOP_AND_RESTART ->
+                    lspClients.stopAndRestartClientsIfNeeded(OCamlLspIntegrationProvider::class.java)
+                LspClientLifecycleAction.START_IF_NEEDED ->
+                    lspClients.startClientsIfNeeded(OCamlLspIntegrationProvider::class.java)
+                LspClientLifecycleAction.NONE -> Unit
             }
             activeLspRuntimeKey = runtimeKey
+            activeLspAvailable = lspAvailable
             DuneWatchService.getInstance(project).refresh()
             DuneProjectModelService.getInstance(project).requestRefresh(delayMs = 0)
         }
@@ -288,6 +294,24 @@ internal data class LspRuntimeKey(
     val launcher: String = "",
     val environmentPrefix: String = "",
 )
+
+internal enum class LspClientLifecycleAction {
+    STOP_AND_RESTART,
+    START_IF_NEEDED,
+    NONE,
+}
+
+internal fun lspClientLifecycleAction(
+    activeRuntimeKey: LspRuntimeKey?,
+    activeLspAvailable: Boolean,
+    runtimeKey: LspRuntimeKey?,
+    lspAvailable: Boolean,
+): LspClientLifecycleAction = when {
+    activeLspAvailable && (!lspAvailable || activeRuntimeKey != runtimeKey) ->
+        LspClientLifecycleAction.STOP_AND_RESTART
+    lspAvailable -> LspClientLifecycleAction.START_IF_NEEDED
+    else -> LspClientLifecycleAction.NONE
+}
 
 internal fun createLspRuntimeKey(
     environment: OCamlEnvironmentDescriptor,

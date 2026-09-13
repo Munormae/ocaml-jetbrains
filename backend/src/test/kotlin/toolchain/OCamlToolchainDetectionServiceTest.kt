@@ -240,6 +240,46 @@ class OCamlToolchainDetectionServiceTest {
     }
 
     @Test
+    fun `Dune managed tool path is recorded as executable rather than version`() {
+        val root = temporaryFolder.newFolder("dune-tool-path").toPath()
+        Files.writeString(root.resolve("dune-project"), "(lang dune 3.0)\n")
+        val duneExecutable = Files.writeString(root.resolve("dune-custom"), "fake dune executable")
+
+        val result = discoverOCamlEnvironments(
+            settings = EnvironmentDiscoverySettings(duneExecutableOverride = duneExecutable.toString()),
+            projectBasePath = root.toString(),
+            runner = EnvironmentCommandRunner { command, _ ->
+                when {
+                    command.exePath == "opam" -> EnvironmentCommandResult(exitCode = 1)
+                    command.parametersList.list == listOf("tools", "which", "ocamllsp") ->
+                        EnvironmentCommandResult(exitCode = 0, stdout = "/tools/ocamllsp\n")
+                    else -> EnvironmentCommandResult(exitCode = 0, stdout = "5.3.0")
+                }
+            },
+        )
+
+        val languageServer = result.environments.single { it.id == result.selectedEnvironmentId }.languageServer
+        assertTrue(languageServer.isAvailable)
+        assertEquals("/tools/ocamllsp", languageServer.executable)
+        assertEquals("", languageServer.version)
+    }
+
+    @Test
+    fun `LSP becomes stopped when availability changes to missing with the same runtime key`() {
+        val runtimeKey = LspRuntimeKey("path:system", "ocamllsp", emptyList(), "C:/bin")
+
+        assertEquals(
+            LspClientLifecycleAction.STOP_AND_RESTART,
+            lspClientLifecycleAction(
+                activeRuntimeKey = runtimeKey,
+                activeLspAvailable = true,
+                runtimeKey = runtimeKey,
+                lspAvailable = false,
+            ),
+        )
+    }
+
+    @Test
     fun `UTop participates in complete environment health`() {
         val available = OCamlToolStatus(OCamlToolAvailability.AVAILABLE)
         val environment = OCamlEnvironmentDescriptor(

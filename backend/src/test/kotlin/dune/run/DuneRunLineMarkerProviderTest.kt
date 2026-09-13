@@ -40,15 +40,15 @@ class DuneRunLineMarkerProviderTest {
         )
 
         assertEquals(
-            listOf("server", "worker", "parser", "lexer", "tools"),
+            listOf("server", "worker", "tools"),
             targets.map { it.name },
         )
         assertEquals(
-            listOf(DuneCommand.EXEC, DuneCommand.EXEC, DuneCommand.TEST, DuneCommand.TEST, DuneCommand.TEST),
+            listOf(DuneCommand.EXEC, DuneCommand.EXEC, DuneCommand.TEST),
             targets.map { it.command },
         )
         assertEquals(
-            listOf("./tools/server.exe", "./tools/worker.exe", "tools", "tools", "tools"),
+            listOf("./tools/server.exe", "./tools/worker.exe", "tools"),
             targets.map { it.target },
         )
     }

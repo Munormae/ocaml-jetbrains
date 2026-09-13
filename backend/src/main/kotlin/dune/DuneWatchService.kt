@@ -27,7 +27,7 @@ class DuneWatchService(private val project: Project) : Disposable {
     )
     private val disposed = AtomicBoolean()
     private val runningWatches = ConcurrentHashMap<Path, RunningWatch>()
-    private val pauseController = ReferenceCountedPauseController(
+    private val pauseControllers = RootScopedPauseController(
         onFirstAcquire = ::pauseWatch,
         onLastRelease = ::resumeWatch,
     )
@@ -51,14 +51,13 @@ class DuneWatchService(private val project: Project) : Disposable {
             .orEmpty()
             .ifEmpty { listOfNotNull(findDuneRoot(project.basePath)) }
         if (!state.lspEnabled || !workspace.manageDuneWatch || roots.isEmpty() || !TrustedProjects.isProjectTrusted(project)) {
-            if (!pauseController.isPaused) stopAll()
+            stopAll()
             return
         }
         if (OCamlToolchainDetectionService.getInstance(project).status.selectedEnvironment?.dune?.isAvailable != true) {
-            if (!pauseController.isPaused) stopAll()
+            stopAll()
             return
         }
-        if (pauseController.isPaused) return
 
         val desired = roots.associateWith { root ->
             try {
@@ -70,7 +69,7 @@ class DuneWatchService(private val project: Project) : Disposable {
         }
         runningWatches.keys.filterNot(desired::containsKey).forEach(::stop)
         for ((root, commandLine) in desired) {
-            if (commandLine == null) {
+            if (commandLine == null || pauseControllers.isPaused(root)) {
                 stop(root)
                 continue
             }
@@ -82,19 +81,19 @@ class DuneWatchService(private val project: Project) : Disposable {
         }
     }
 
-    fun acquirePause(): AutoCloseable = pauseController.acquire()
+    fun acquirePause(root: Path): AutoCloseable = pauseControllers.acquire(root)
 
     fun isWatching(root: Path): Boolean = runningWatches[root.toAbsolutePath().normalize()]
         ?.handler
         ?.isProcessTerminated == false
 
-    private fun pauseWatch() {
+    private fun pauseWatch(root: Path) {
         if (!disposed.get()) coordinator.dispatchAndWait {
-            if (!stopAll()) throw ExecutionException("Unable to pause all Dune watches")
+            if (!stop(root)) throw ExecutionException("Unable to pause Dune watch in $root")
         }
     }
 
-    private fun resumeWatch() {
+    private fun resumeWatch(@Suppress("UNUSED_PARAMETER") root: Path) {
         if (!project.isDisposed) refresh()
     }
 
@@ -243,6 +242,25 @@ internal class ReferenceCountedPauseController(
             if (closed.compareAndSet(false, true)) controller.release()
         }
     }
+}
+
+internal class RootScopedPauseController(
+    private val onFirstAcquire: (Path) -> Unit,
+    private val onLastRelease: (Path) -> Unit,
+) {
+    private val controllers = ConcurrentHashMap<Path, ReferenceCountedPauseController>()
+
+    fun acquire(root: Path): AutoCloseable {
+        val normalizedRoot = root.toAbsolutePath().normalize()
+        return controllers.computeIfAbsent(normalizedRoot) {
+            ReferenceCountedPauseController(
+                onFirstAcquire = { onFirstAcquire(normalizedRoot) },
+                onLastRelease = { onLastRelease(normalizedRoot) },
+            )
+        }.acquire()
+    }
+
+    fun isPaused(root: Path): Boolean = controllers[root.toAbsolutePath().normalize()]?.isPaused == true
 }
 
 internal fun createDuneWatchCommandLine(

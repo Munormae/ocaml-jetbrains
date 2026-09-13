@@ -74,7 +74,7 @@ class OpenOCamlReplAction : DumbAwareAction(
         ) {
             override fun run(indicator: ProgressIndicator) {
                 indicator.text = OCamlBundle.message("repl.starting")
-                val pauseLease = DuneWatchService.getInstance(project).acquirePause()
+                val pauseLease = DuneWatchService.getInstance(project).acquirePause(root)
                 try {
                     val commandLine = createOCamlEnvironmentCommandLine(
                         project = project,

@@ -31,12 +31,17 @@ class OCamlToolchainStatusSnapshotTest {
         val missingFormatter = ready.copy(
             formatter = ready.formatter.copy(availability = OCamlToolAvailability.MISSING),
         )
+        val missingUtop = ready.copy(
+            utop = ready.utop.copy(availability = OCamlToolAvailability.MISSING),
+        )
 
         assertTrue(ready.isReady)
         assertTrue(ready.hasAllTools)
         assertFalse(missingLsp.isReady)
         assertTrue(missingFormatter.isReady)
         assertFalse(missingFormatter.hasAllTools)
+        assertTrue(missingUtop.isReady)
+        assertFalse(missingUtop.hasAllTools)
         assertTrue(missingLsp.canInstallTools)
     }
 
@@ -76,6 +81,7 @@ class OCamlToolchainStatusSnapshotTest {
             dune = tool.copy(version = "3.24.2"),
             languageServer = tool.copy(version = "1.23.0"),
             formatter = tool.copy(version = "0.27.0"),
+            utop = tool.copy(version = "2.16.0"),
             canInstallTools = true,
         )
     }

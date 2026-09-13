@@ -25,6 +25,7 @@ import dev.munormae.toolchain.OCamlToolchainStatusSnapshot
 import javax.swing.JButton
 import javax.swing.JComboBox
 import javax.swing.JLabel
+import javax.swing.JTextField
 
 class OCamlSettingsConfigurable(private val project: Project) :
     BoundConfigurable(OCamlBundle.message("settings.display.name")) {
@@ -51,6 +52,7 @@ class OCamlSettingsConfigurable(private val project: Project) :
     private lateinit var lspOverride: TextFieldWithBrowseButton
     private lateinit var duneOverride: TextFieldWithBrowseButton
     private lateinit var formatterOverride: TextFieldWithBrowseButton
+    private lateinit var additionalLspArguments: JTextField
 
     override fun createPanel(): DialogPanel {
         val shared = projectSettings.state
@@ -164,12 +166,13 @@ class OCamlSettingsConfigurable(private val project: Project) :
                         .component
                 }
                 row(OCamlBundle.message("settings.advanced.arguments")) {
-                    textField()
+                    additionalLspArguments = textField()
                         .bindText(
                             { local.additionalLspArguments.orEmpty() },
                             { local.additionalLspArguments = it.trim() },
                         )
                         .align(AlignX.FILL)
+                        .component
                 }
                 row {
                     checkBox(OCamlBundle.message("settings.advanced.watch"))
@@ -224,7 +227,7 @@ class OCamlSettingsConfigurable(private val project: Project) :
                 lspExecutableOverride = lspOverride.text.trim(),
                 duneExecutableOverride = duneOverride.text.trim(),
                 ocamlformatExecutableOverride = formatterOverride.text.trim(),
-                additionalLspArguments = workspaceSettings.state.additionalLspArguments.orEmpty(),
+                additionalLspArguments = additionalLspArguments.text.trim(),
             ),
         )
     }

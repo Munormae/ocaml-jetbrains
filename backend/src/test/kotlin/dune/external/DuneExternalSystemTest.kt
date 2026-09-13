@@ -1,6 +1,10 @@
 package dev.munormae.dune.external
 
 import dev.munormae.toolchain.OCamlEnvironmentKind
+import dev.munormae.dune.model.DuneProjectModel
+import dev.munormae.dune.model.DuneTarget
+import dev.munormae.dune.model.DuneTargetKind
+import dev.munormae.dune.model.DuneWorkspaceModel
 import java.io.File
 import java.nio.file.Path
 import org.junit.Assert.assertEquals
@@ -29,7 +33,7 @@ class DuneExternalSystemTest {
         }
 
         val output = mutableListOf<String>()
-        val exitCode = executeDuneExternalTaskProcess(process) { text, _ -> output += text }
+        val exitCode = executeDuneExternalTaskProcess(process, output = { text, _ -> output += text })
 
         assertEquals(0, exitCode)
         assertEquals(listOf("compiling main.ml\n"), output)
@@ -156,5 +160,42 @@ class DuneExternalSystemTest {
 
         val expectedBin = prefix.resolve("bin").toString()
         assertEquals(expectedBin, command.environment.getValue("PATH").split(File.pathSeparator).first())
+    }
+
+    @Test
+    fun `external executable tasks use paths relative to the Dune workspace`() {
+        val root = Path.of("dune-workspace").toAbsolutePath().normalize()
+        val nestedProject = root.resolve("vendor/child")
+        val workspace = DuneWorkspaceModel(
+            root,
+            linkedMapOf(
+                root to DuneProjectModel(root),
+                nestedProject to DuneProjectModel(
+                    nestedProject,
+                    executables = listOf(
+                        DuneTarget(
+                            kind = DuneTargetKind.EXECUTABLE,
+                            name = "main",
+                            target = "./bin/main.exe",
+                            directory = nestedProject.resolve("bin"),
+                        ),
+                    ),
+                ),
+            ),
+        )
+
+        assertEquals(listOf("./vendor/child/bin/main.exe"), duneWorkspaceExecutableTargets(workspace))
+    }
+
+    @Test
+    fun `changed Dune file chooses the deepest linked external root`() {
+        val root = Path.of("dune-workspace").toAbsolutePath().normalize()
+        val child = root.resolve("vendor")
+        val grandchild = child.resolve("project")
+
+        assertEquals(
+            grandchild,
+            mostSpecificDuneRoot(grandchild.resolve("dune"), listOf(root, child, grandchild)),
+        )
     }
 }

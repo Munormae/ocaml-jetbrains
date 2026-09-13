@@ -102,6 +102,7 @@ fun ensureOCamlModule(
     val hasTopLevelSource = root.children.any { file ->
         !file.isDirectory && (file.extension == "ml" || file.extension == "mli")
     }
+    val hasDuneMarker = root.findChild("dune-project") != null || root.findChild("dune-workspace") != null
     val hasProjectMarker = PROJECT_MARKERS.any { root.findChild(it) != null }
     if (!hasProjectMarker && !hasTopLevelSource && virtualSourceRoots.isEmpty() &&
         virtualTestRoots.isEmpty() && additionalSourceRoots.isEmpty()
@@ -117,7 +118,7 @@ fun ensureOCamlModule(
     fun pathUrl(path: Path) = urlManager.getOrCreateFromUrl(VfsUtilCore.pathToUrl(path.toString()))
 
     val testRootUrls = virtualTestRoots.map { it.toVirtualFileUrl(urlManager) }
-    val virtualSourceRootUrls = virtualSourceRoots
+    val virtualSourceRootUrls = (if (hasDuneMarker) listOf(rootUrl) else emptyList()) + virtualSourceRoots
         .map { it.toVirtualFileUrl(urlManager) }
         .ifEmpty { if (hasTopLevelSource) listOf(rootUrl) else emptyList() }
     val additionalSourceRootUrls = additionalSourceRoots

@@ -47,8 +47,9 @@ import com.intellij.util.messages.Topic
 import com.intellij.util.xmlb.annotations.XCollection
 import dev.munormae.OCamlBundle
 import dev.munormae.dune.DuneWatchService
-import dev.munormae.dune.run.DuneCommand
-import dev.munormae.dune.model.discoverDuneSourceModel
+import dev.munormae.dune.findDuneRoot
+import dev.munormae.dune.model.DuneWorkspaceModel
+import dev.munormae.dune.model.discoverDuneWorkspaceSourceModel
 import dev.munormae.dune.model.DuneProjectModelService
 import dev.munormae.dune.model.DuneProjectModelState
 import dev.munormae.icons.OCamlIcons
@@ -245,12 +246,14 @@ class DuneExternalSystemManager : ExternalSystemManager<
     override fun getAffectedExternalProjectPath(changedFileOrDirPath: String, project: Project): String? {
         val changed = runCatching { Path.of(changedFileOrDirPath).toAbsolutePath().normalize() }.getOrNull() ?: return null
         if (changed.fileName?.toString() !in DUNE_MODEL_FILES) return null
-        return DuneExternalSystemSettings.getInstance(project).linkedProjectsSettings
+        val linkedRoots = DuneExternalSystemSettings.getInstance(project).linkedProjectsSettings
             .mapNotNull { runCatching { Path.of(it.externalProjectPath).toAbsolutePath().normalize() }.getOrNull() }
-            .firstOrNull(changed::startsWith)
-            ?.toString()
+        return mostSpecificDuneRoot(changed, linkedRoots)?.toString()
     }
 }
+
+internal fun mostSpecificDuneRoot(changed: Path, roots: Collection<Path>): Path? =
+    roots.filter(changed::startsWith).maxByOrNull(Path::getNameCount)
 
 class DuneExternalProjectResolver : ExternalSystemProjectResolver<DuneExternalExecutionSettings> {
     override fun resolveProjectInfo(
@@ -269,16 +272,17 @@ class DuneExternalProjectResolver : ExternalSystemProjectResolver<DuneExternalEx
             root.toString(),
         )
         val node = DataNode(ProjectKeys.PROJECT, projectData, null)
-        val openProjectModel = findOpenProject(projectPath)
+        val openWorkspace = findOpenProject(projectPath)
             ?.let(DuneProjectModelService::getInstance)
             ?.state
-            ?.let { state -> (state as? DuneProjectModelState.Ready)?.workspace?.projects?.get(root) }
-        val configurations = (openProjectModel ?: discoverDuneSourceModel(root)).runConfigurations
+            ?.let { state -> (state as? DuneProjectModelState.Ready)?.workspace }
+            ?.takeIf { it.workspaceRoot == root }
+        val workspace = openWorkspace ?: discoverDuneWorkspaceSourceModel(root)
         val taskNames = buildList {
             add("build")
             add("test")
             add("clean")
-            configurations.filter { it.command == DuneCommand.EXEC }.forEach { add("exec ${it.target}") }
+            duneWorkspaceExecutableTargets(workspace).forEach { add("exec $it") }
         }
         taskNames.distinct().forEach { taskName ->
             node.createChild(
@@ -294,6 +298,20 @@ class DuneExternalProjectResolver : ExternalSystemProjectResolver<DuneExternalEx
         listener: ExternalSystemTaskNotificationListener,
     ): Boolean = false
 }
+
+internal fun duneWorkspaceExecutableTargets(workspace: DuneWorkspaceModel): List<String> =
+    workspace.projects.values.asSequence()
+        .flatMap { projectModel ->
+            projectModel.executables.asSequence().mapNotNull { executable ->
+                val absoluteTarget = runCatching { projectModel.root.resolve(executable.target).normalize() }
+                    .getOrNull() ?: return@mapNotNull null
+                if (!absoluteTarget.startsWith(workspace.workspaceRoot)) return@mapNotNull null
+                val relativeTarget = workspace.workspaceRoot.relativize(absoluteTarget).toString().replace('\\', '/')
+                "./$relativeTarget"
+            }
+        }
+        .distinct()
+        .toList()
 
 class DuneExternalTaskManager : ExternalSystemTaskManager<DuneExternalExecutionSettings> {
     private val activeProcesses = ConcurrentHashMap<ExternalSystemTaskId, DuneExternalTaskProcess>()
@@ -316,7 +334,10 @@ class DuneExternalTaskManager : ExternalSystemTaskManager<DuneExternalExecutionS
             }
             val runViaRpc = useDuneRpcForExternalTasks(settings.useRpc, settings.tasks)
             if (!runViaRpc) {
-                pauseLease = findOpenProject(projectPath)?.let { DuneWatchService.getInstance(it).acquirePause() }
+                pauseLease = findOpenProject(projectPath)?.let { openProject ->
+                    val watchRoot = findDuneRoot(projectPath) ?: Path.of(projectPath).toAbsolutePath().normalize()
+                    DuneWatchService.getInstance(openProject).acquirePause(watchRoot)
+                }
             }
             for (task in settings.tasks.ifEmpty { listOf("build") }) {
                 if (id in cancelledTasks) throw ExternalSystemException(OCamlBundle.message("dune.external.error.cancelled"))

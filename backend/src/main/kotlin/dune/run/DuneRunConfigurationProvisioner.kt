@@ -9,6 +9,7 @@ import com.intellij.openapi.project.Project
 import dev.munormae.OCamlBundle
 import dev.munormae.dune.DuneWatchService
 import dev.munormae.dune.createDuneCommandLine
+import dev.munormae.dune.findDuneRoot
 import dev.munormae.dune.model.discoverDuneSourceModel
 import java.nio.file.Path
 
@@ -311,7 +312,8 @@ internal fun discoverDuneRunConfigurations(
 }
 
 internal fun describeDuneWorkspace(project: Project, duneRoot: Path): List<DuneRunConfigurationSpec>? {
-    val pauseLease = DuneWatchService.getInstance(project).acquirePause()
+    val pauseRoot = findDuneRoot(duneRoot.toString()) ?: duneRoot
+    val pauseLease = DuneWatchService.getInstance(project).acquirePause(pauseRoot)
     return try {
         val commandLine = createDuneCommandLine(
             project = project,

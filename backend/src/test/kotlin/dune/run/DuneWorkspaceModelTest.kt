@@ -4,11 +4,16 @@ import dev.munormae.dune.model.discoverDuneSourceMetadata
 import dev.munormae.dune.model.discoverDuneSourceModel
 import dev.munormae.dune.model.discoverDuneWorkspaceSourceModel
 import dev.munormae.dune.model.DuneWorkspaceSourceIndex
+import dev.munormae.dune.model.DuneWorkspaceModel
+import dev.munormae.dune.model.DuneProjectModel
+import dev.munormae.dune.model.describedExecutablesByProject
 import dev.munormae.dune.model.duneExecutableModelName
 import dev.munormae.dune.model.rootsNeedingDuneDescribe
 import java.nio.file.Files
 import java.nio.file.Path
+import java.util.concurrent.CancellationException
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
@@ -75,7 +80,8 @@ class DuneWorkspaceModelTest {
 
         val model = discoverDuneWorkspaceSourceModel(workspace)
 
-        assertEquals(listOf(workspace.toAbsolutePath().normalize(), child.toAbsolutePath().normalize()), model.roots)
+        assertEquals(listOf(workspace.toAbsolutePath().normalize()), model.roots)
+        assertEquals(listOf(workspace.toAbsolutePath().normalize(), child.toAbsolutePath().normalize()), model.projectRoots)
         assertEquals(listOf("parent_app"), model.projects.getValue(workspace.toAbsolutePath().normalize()).executables.map { it.name })
         assertEquals(listOf("child_app"), model.projects.getValue(child.toAbsolutePath().normalize()).executables.map { it.name })
         assertEquals(
@@ -94,9 +100,52 @@ class DuneWorkspaceModelTest {
 
         val model = discoverDuneWorkspaceSourceModel(workspace)
 
-        assertEquals(listOf(workspace, child), model.roots)
+        assertEquals(listOf(workspace), model.roots)
+        assertEquals(listOf(workspace, child), model.projectRoots)
         assertEquals(listOf("parent_app"), model.projects.getValue(workspace).executables.map { it.name })
         assertEquals(listOf("child_app"), model.projects.getValue(child).executables.map { it.name })
+    }
+
+    @Test
+    fun `nested dune-workspace files do not become Dune projects`() {
+        val workspace = temporaryFolder.newFolder("workspace-markers").toPath()
+        Files.writeString(workspace.resolve("dune-workspace"), "(lang dune 3.0)\n")
+        val child = Files.createDirectories(workspace.resolve("vendor/child"))
+        Files.writeString(child.resolve("dune-workspace"), "(lang dune 3.0)\n")
+        Files.writeString(child.resolve("dune-project"), "(lang dune 3.0)\n")
+        Files.writeString(child.resolve("dune"), "(executable (name child_app))\n")
+
+        val model = discoverDuneWorkspaceSourceModel(workspace)
+
+        assertEquals(listOf(child), model.projectRoots)
+        assertEquals(listOf(workspace), model.roots)
+    }
+
+    @Test
+    fun `workspace describe targets are assigned to logical projects`() {
+        val workspaceRoot = temporaryFolder.newFolder("describe-workspace").toPath()
+        val projectRoot = workspaceRoot.resolve("vendor/child")
+        val workspace = DuneWorkspaceModel(
+            workspaceRoot,
+            linkedMapOf(
+                workspaceRoot to DuneProjectModel(workspaceRoot),
+                projectRoot to DuneProjectModel(projectRoot),
+            ),
+        )
+        val described = listOf(
+            DuneRunConfigurationSpec(
+                command = DuneCommand.EXEC,
+                name = "child_app",
+                target = "./vendor/child/bin/child_app.exe",
+                workingDirectory = workspaceRoot.toString(),
+            ),
+        )
+
+        val assigned = describedExecutablesByProject(workspace, described)
+
+        assertEquals("./bin/child_app.exe", assigned.getValue(projectRoot).single().target)
+        assertEquals(projectRoot.resolve("bin"), assigned.getValue(projectRoot).single().directory)
+        assertEquals(emptyList<String>(), assigned[workspaceRoot].orEmpty().map { it.name })
     }
 
     @Test
@@ -151,6 +200,20 @@ class DuneWorkspaceModelTest {
         val model = index.refresh(setOf(duneFile))
 
         assertEquals(emptyList<String>(), model.projects.getValue(root.toAbsolutePath().normalize()).executables.map { it.name })
+    }
+
+    @Test
+    fun `cancelled cold scan retries from a complete snapshot`() {
+        val root = temporaryFolder.newFolder("cancelled-cold-scan").toPath()
+        Files.writeString(root.resolve("dune-project"), "(lang dune 3.0)\n")
+        Files.writeString(root.resolve("dune"), "(executable (name main))\n")
+        val index = DuneWorkspaceSourceIndex(root)
+        var probes = 0
+
+        val failure = runCatching { index.refresh(isCancelled = { ++probes > 2 }) }.exceptionOrNull()
+
+        assertTrue(failure is CancellationException)
+        assertEquals(listOf("main"), index.refresh().projects.getValue(root).executables.map { it.name })
     }
 
     @Test

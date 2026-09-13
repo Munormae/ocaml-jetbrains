@@ -9,14 +9,12 @@ import java.nio.file.Path
 
 internal fun findDuneRoot(startPath: String?): Path? {
     var current = startPath?.let(Path::of)?.toAbsolutePath()?.normalize() ?: return null
+    var outermostWorkspace: Path? = null
+    var outermostProject: Path? = null
     while (true) {
-        if (
-            Files.isRegularFile(current.resolve("dune-project")) ||
-            Files.isRegularFile(current.resolve("dune-workspace"))
-        ) {
-            return current
-        }
-        current = current.parent ?: return null
+        if (Files.isRegularFile(current.resolve("dune-workspace"))) outermostWorkspace = current
+        if (Files.isRegularFile(current.resolve("dune-project"))) outermostProject = current
+        current = current.parent ?: return outermostWorkspace ?: outermostProject
     }
 }
 

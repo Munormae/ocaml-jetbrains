@@ -10,10 +10,9 @@ Use this checklist before publishing every plugin release. It supplements automa
 
 ## Automated Split Mode baseline
 
-- [ ] Set `LICENSE_KEY` to the Base64-encoded contents of an IntelliJ IDEA Ultimate offline activation file accepted by the Starter test instance.
-- [ ] Confirm the `Split Mode Smoke` CI job actually ran and passed; missing `LICENSE_KEY` now fails the job instead of reporting success.
-- [ ] Run `./gradlew testIdeUiSplitMode` (or `.\gradlew.bat testIdeUiSplitMode` on Windows).
-- [ ] Confirm the test opens OCaml Settings, triggers a refresh, receives non-default toolchain status through Fleet RPC, and observes that status in the frontend UI.
+- [ ] If an IntelliJ IDEA Ultimate license is available, set `LICENSE_KEY` to the Base64-encoded offline activation file accepted by the Starter test instance.
+- [ ] If `LICENSE_KEY` is available, confirm the optional `Split Mode Smoke` CI job ran and passed, or run `./gradlew testIdeUiSplitMode` (on Windows: `.\gradlew.bat testIdeUiSplitMode`). Confirm that Settings refresh crosses Fleet RPC and updates the frontend UI.
+- [ ] If no license is available, record that the real Split Mode UI roundtrip was not tested. The job is skipped and does not block CI or release draft creation; the regular Linux/Windows tests and Plugin Verifier still apply.
 
 ## Split-mode RPC and editor lifecycle
 

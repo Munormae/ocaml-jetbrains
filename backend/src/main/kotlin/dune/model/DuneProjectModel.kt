@@ -11,6 +11,7 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.SimpleFileVisitor
 import java.nio.file.attribute.BasicFileAttributes
+import java.util.concurrent.CancellationException
 
 enum class DuneTargetKind {
     EXECUTABLE,
@@ -84,6 +85,9 @@ data class DuneWorkspaceModel(
     val projects: Map<Path, DuneProjectModel>,
 ) {
     val roots: List<Path>
+        get() = listOf(workspaceRoot)
+
+    val projectRoots: List<Path>
         get() = projects.keys.toList()
 
     val primaryModel: DuneProjectModel?
@@ -139,20 +143,33 @@ internal class DuneWorkspaceSourceIndex(workspaceRoot: Path) {
     private var initialized = false
 
     @Synchronized
-    fun refresh(changedPaths: Set<Path> = emptySet()): DuneWorkspaceModel {
-        if (!initialized || changedPaths.any(::isRootTopologyFile)) {
-            scanAll()
-        } else {
-            changedPaths.asSequence()
-                .map(Path::toAbsolutePath)
-                .map(Path::normalize)
-                .filter { it.fileName?.toString() == "dune" }
-                .forEach(::refreshDuneFile)
+    fun refresh(
+        changedPaths: Set<Path> = emptySet(),
+        isCancelled: () -> Boolean = { false },
+    ): DuneWorkspaceModel {
+        try {
+            requireActive(isCancelled)
+            if (!initialized || changedPaths.any(::isRootTopologyFile)) {
+                scanAll(isCancelled)
+            } else {
+                changedPaths.asSequence()
+                    .map(Path::toAbsolutePath)
+                    .map(Path::normalize)
+                    .filter { it.fileName?.toString() == "dune" }
+                    .forEach { path ->
+                        requireActive(isCancelled)
+                        refreshDuneFile(path)
+                    }
+            }
+            requireActive(isCancelled)
+            return buildWorkspace(isCancelled)
+        } catch (exception: CancellationException) {
+            initialized = false
+            throw exception
         }
-        return buildWorkspace()
     }
 
-    private fun scanAll() {
+    private fun scanAll(isCancelled: () -> Boolean) {
         roots.clear()
         packagesByRoot.clear()
         duneFiles.clear()
@@ -161,6 +178,7 @@ internal class DuneWorkspaceSourceIndex(workspaceRoot: Path) {
 
         Files.walkFileTree(workspaceRoot, object : SimpleFileVisitor<Path>() {
             override fun preVisitDirectory(directory: Path, attributes: BasicFileAttributes): FileVisitResult {
+                requireActive(isCancelled)
                 if (directory != workspaceRoot && directory.fileName.toString() in IGNORED_DIRECTORIES) {
                     return FileVisitResult.SKIP_SUBTREE
                 }
@@ -168,22 +186,32 @@ internal class DuneWorkspaceSourceIndex(workspaceRoot: Path) {
             }
 
             override fun visitFile(file: Path, attributes: BasicFileAttributes): FileVisitResult {
+                requireActive(isCancelled)
                 if (!attributes.isRegularFile) return FileVisitResult.CONTINUE
                 val normalizedFile = file.toAbsolutePath().normalize()
                 when (file.fileName.toString()) {
                     "dune" -> discoveredDuneFiles.add(normalizedFile)
-                    "dune-project", "dune-workspace" -> {
+                    "dune-project" -> {
                         roots.add(normalizedFile.parent)
-                        if (file.fileName.toString() == "dune-project") projectFiles.add(normalizedFile)
+                        projectFiles.add(normalizedFile)
                     }
                 }
                 return FileVisitResult.CONTINUE
             }
         })
 
-        if (discoveredDuneFiles.any { file -> roots.none(file::startsWith) }) roots.add(workspaceRoot)
-        projectFiles.sorted().forEach(::refreshProjectFile)
-        discoveredDuneFiles.sorted().forEach(::refreshDuneFile)
+        if (
+            discoveredDuneFiles.any { file -> roots.none(file::startsWith) } ||
+            (roots.isEmpty() && Files.isRegularFile(workspaceRoot.resolve("dune-workspace")))
+        ) roots.add(workspaceRoot)
+        projectFiles.sorted().forEach { file ->
+            requireActive(isCancelled)
+            refreshProjectFile(file)
+        }
+        discoveredDuneFiles.sorted().forEach { file ->
+            requireActive(isCancelled)
+            refreshDuneFile(file)
+        }
         initialized = true
     }
 
@@ -212,12 +240,13 @@ internal class DuneWorkspaceSourceIndex(workspaceRoot: Path) {
         duneFiles[duneFile] = IndexedDuneFile(root, duneFile.parent, metadata)
     }
 
-    private fun buildWorkspace(): DuneWorkspaceModel {
+    private fun buildWorkspace(isCancelled: () -> Boolean): DuneWorkspaceModel {
         val orderedRoots = orderedRoots()
         val accumulators = orderedRoots.associateWith { root ->
             MutableDuneProjectModel(root).apply { packages.addAll(packagesByRoot[root].orEmpty()) }
         }
         duneFiles.values.forEach { indexed ->
+            requireActive(isCancelled)
             accumulators[indexed.root]?.add(indexed.directory, indexed.metadata)
         }
         return DuneWorkspaceModel(
@@ -230,6 +259,10 @@ internal class DuneWorkspaceSourceIndex(workspaceRoot: Path) {
 
     private fun isRootTopologyFile(path: Path): Boolean =
         path.fileName?.toString() == "dune-project" || path.fileName?.toString() == "dune-workspace"
+
+    private fun requireActive(isCancelled: () -> Boolean) {
+        if (isCancelled()) throw CancellationException("Dune workspace refresh superseded")
+    }
 
     private data class IndexedDuneFile(
         val root: Path,

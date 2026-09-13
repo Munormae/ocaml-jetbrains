@@ -175,20 +175,32 @@ jobs:
       - name: Run Tests
         run: .\gradlew.bat check
 
-  splitModeSmoke:
-    name: Split Mode Smoke
-    needs: [ build ]
+  # Split Mode requires an IDEA Ultimate license. Keep the UI smoke optional:
+  # forks and repositories without a license must not fail their normal CI.
+  splitModeSmokeEligibility:
+    name: Split Mode Smoke eligibility
     runs-on: ubuntu-latest
+    outputs:
+      run: ${{ steps.eligibility.outputs.run }}
     env:
       HAS_LICENSE_KEY: ${{ secrets.LICENSE_KEY != '' }}
     steps:
-
-      - name: Require Split Mode license for CI
-        if: env.HAS_LICENSE_KEY != 'true'
+      - id: eligibility
+        name: Select Split Mode Smoke mode
+        shell: bash
         run: |
-          echo "::error::Split Mode smoke test requires the LICENSE_KEY secret"
-          exit 1
+          if [[ "$HAS_LICENSE_KEY" == "true" ]]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          fi
 
+  splitModeSmoke:
+    name: Split Mode Smoke
+    needs: [ build, splitModeSmokeEligibility ]
+    if: needs.splitModeSmokeEligibility.outputs.run == 'true'
+    runs-on: ubuntu-latest
+    steps:
       - name: Fetch Sources
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -212,8 +224,20 @@ jobs:
   # If accepted and published, the release workflow would be triggered
   releaseDraft:
     name: Release draft
-    if: github.event_name != 'pull_request'
-    needs: [ build, test, windowsTest, splitModeSmoke, verify ]
+    # A missing license skips the optional smoke. If the smoke does run, it
+    # must pass before a release draft can be prepared.
+    if: >-
+      ${{
+        always() &&
+        github.event_name != 'pull_request' &&
+        needs.build.result == 'success' &&
+        needs.test.result == 'success' &&
+        needs.windowsTest.result == 'success' &&
+        needs.verify.result == 'success' &&
+        needs.splitModeSmokeEligibility.result == 'success' &&
+        (needs.splitModeSmoke.result == 'success' || needs.splitModeSmoke.result == 'skipped')
+      }}
+    needs: [ build, test, windowsTest, verify, splitModeSmokeEligibility, splitModeSmoke ]
     runs-on: ubuntu-latest
     permissions:
       contents: write

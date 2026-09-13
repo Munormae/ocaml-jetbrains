@@ -61,4 +61,18 @@ class OCamlProjectModelIntegrationTest : HeavyPlatformTestCase() {
             .single()
         assertEquals(listOf("${root.url}/bin"), contentRoot.sourceRoots.map { it.url.url })
     }
+
+    fun testDuneWorkspaceRootCoversArbitrarySourceDirectories() {
+        val rootPath = createTempDir("arbitrary-dune-layout").toPath()
+        Files.writeString(rootPath.resolve("dune-project"), "(lang dune 3.0)\n")
+        Files.createDirectories(rootPath.resolve("lib"))
+        val compiler = Files.createDirectories(rootPath.resolve("compiler"))
+        Files.writeString(compiler.resolve("foo.ml"), "let answer = 42\n")
+        val root = requireNotNull(LocalFileSystem.getInstance().refreshAndFindFileByNioFile(rootPath))
+
+        ensureOCamlModule(project, root, "arbitrary-dune-layout")
+
+        val source = requireNotNull(root.findFileByRelativePath("compiler/foo.ml"))
+        assertTrue(ProjectFileIndex.getInstance(project).isInSource(source))
+    }
 }

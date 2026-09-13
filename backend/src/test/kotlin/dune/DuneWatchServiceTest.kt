@@ -29,6 +29,26 @@ class DuneWatchServiceTest {
     }
 
     @Test
+    fun `nested Dune projects share the outermost workspace root`() {
+        val workspace = temporaryFolder.newFolder("workspace-root").toPath()
+        Files.writeString(workspace.resolve("dune-project"), "(lang dune 3.0)")
+        val child = Files.createDirectories(workspace.resolve("vendor/child"))
+        Files.writeString(child.resolve("dune-project"), "(lang dune 3.0)")
+
+        assertEquals(workspace.toAbsolutePath().normalize(), findDuneRoot(child.toString()))
+    }
+
+    @Test
+    fun `outermost dune-workspace takes precedence over nested project files`() {
+        val workspace = temporaryFolder.newFolder("explicit-workspace").toPath()
+        Files.writeString(workspace.resolve("dune-workspace"), "(lang dune 3.0)")
+        val child = Files.createDirectories(workspace.resolve("vendor/child"))
+        Files.writeString(child.resolve("dune-project"), "(lang dune 3.0)")
+
+        assertEquals(workspace.toAbsolutePath().normalize(), findDuneRoot(child.toString()))
+    }
+
+    @Test
     fun `builds an opam watch command`() {
         val root = temporaryFolder.newFolder().toPath()
 
@@ -88,6 +108,34 @@ class DuneWatchServiceTest {
 
         second.close()
         assertEquals(1, resumeCalls)
+    }
+
+    @Test
+    fun `pausing one workspace leaves another workspace active`() {
+        val firstRoot = temporaryFolder.newFolder("first-workspace").toPath()
+        val secondRoot = temporaryFolder.newFolder("second-workspace").toPath()
+        val stopped = mutableListOf<java.nio.file.Path>()
+        val resumed = mutableListOf<java.nio.file.Path>()
+        val pauses = RootScopedPauseController(
+            onFirstAcquire = { root -> stopped.add(root) },
+            onLastRelease = { root -> resumed.add(root) },
+        )
+
+        val firstLease = pauses.acquire(firstRoot)
+        val secondLease = pauses.acquire(secondRoot)
+        val nestedFirstLease = pauses.acquire(firstRoot)
+
+        assertEquals(listOf(firstRoot, secondRoot), stopped)
+        assertTrue(pauses.isPaused(firstRoot))
+        assertTrue(pauses.isPaused(secondRoot))
+        firstLease.close()
+        secondLease.close()
+        assertTrue(pauses.isPaused(firstRoot))
+        assertFalse(pauses.isPaused(secondRoot))
+        assertEquals(listOf(secondRoot), resumed)
+        nestedFirstLease.close()
+        assertFalse(pauses.isPaused(firstRoot))
+        assertEquals(listOf(secondRoot, firstRoot), resumed)
     }
 
     @Test

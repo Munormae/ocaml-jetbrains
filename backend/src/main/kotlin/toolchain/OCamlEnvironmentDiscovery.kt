@@ -356,11 +356,11 @@ private fun probeEnvironment(
                 toolName
             }
         }
-        val commandLine = if (
+        val usesDuneToolWhich =
             candidate.kind == OCamlEnvironmentKind.DUNE_PACKAGE_MANAGEMENT &&
             toolName in DUNE_MANAGED_DEVELOPER_TOOLS &&
             override.isBlank()
-        ) {
+        val commandLine = if (usesDuneToolWhich) {
             GeneralCommandLine(settings.duneExecutableOverride.ifBlank { "dune" })
                 .withParameters("tools", "which", toolName)
         } else {
@@ -385,8 +385,12 @@ private fun probeEnvironment(
         return if (result.isSuccess) {
             OCamlToolStatus(
                 availability = OCamlToolAvailability.AVAILABLE,
-                version = result.firstOutputLine.ifEmpty { "version unavailable" },
-                executable = displayedExecutable,
+                version = if (usesDuneToolWhich) "" else result.firstOutputLine.ifEmpty { "version unavailable" },
+                executable = if (usesDuneToolWhich) {
+                    result.firstOutputLine.ifEmpty { displayedExecutable }
+                } else {
+                    displayedExecutable
+                },
             )
         } else {
             OCamlToolStatus(

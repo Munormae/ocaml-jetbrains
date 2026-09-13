@@ -178,7 +178,8 @@ class DuneRunConfiguration(
             }
             @Throws(ExecutionException::class)
             override fun startProcess(): ProcessHandler {
-                val pauseLease = DuneWatchService.getInstance(project).acquirePause()
+                val pauseRoot = findDuneRoot(directory.toString()) ?: directory
+                val pauseLease = DuneWatchService.getInstance(project).acquirePause(pauseRoot)
                 try {
                     return ColoredProcessHandler(commandLine).also { handler ->
                         handler.addProcessListener(object : ProcessListener {

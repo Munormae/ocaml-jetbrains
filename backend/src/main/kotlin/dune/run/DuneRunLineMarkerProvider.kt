@@ -41,13 +41,13 @@ internal fun findDuneRunnableTargets(text: String, duneFile: Path, root: Path): 
                     ),
                 )
             }
-            metadata.tests.forEach { test ->
+            metadata.tests.firstOrNull()?.let { test ->
                 add(
                     DuneRunnableTarget(
                         test.sourceOffset,
                         test.sourceLength,
                         DuneCommand.TEST,
-                        test.name,
+                        relativeDirectory,
                         relativeDirectory,
                     ),
                 )
